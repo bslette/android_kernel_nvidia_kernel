@@ -308,9 +308,10 @@ static int pwm_fan_of_get_cooling_data(struct device *dev,
 		return -ENOMEM;
 
 	if (base_profile) {
+		/* num is a count of u32 levels, not bytes */
 		memcpy(ctx->pwm_fan_cooling_levels,
 		  ctx->fan_profile_cooling_levels[ctx->fan_current_profile],
-						num);
+						num * sizeof(u32));
 	} else {
 		ret = of_property_read_u32_array(np, "cooling-levels",
 				ctx->pwm_fan_cooling_levels, num);
