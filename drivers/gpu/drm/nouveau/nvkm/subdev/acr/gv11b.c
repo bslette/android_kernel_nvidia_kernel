@@ -12,6 +12,13 @@
 #include "priv.h"
 
 #include <core/memory.h>
+#include <core/firmware.h>
+
+/* XXX bring-up experiment: replace nouveau's LS blob with NVIDIA's (captured
+ * from nvgpu R35; WPR-absolute addresses, same fixed WPR carveout). */
+static bool nvblob;
+module_param(nvblob, bool, 0400);
+static u32 gv11b_nvblob_size;
 
 #include <nvfw/acr.h>
 #include <nvfw/flcn.h>
@@ -25,7 +32,7 @@ gv11b_acr_load_setup(struct nvkm_falcon_fw *fw)
 	desc->wpr_offset = 0;
 	desc->regions.no_regions = 1;
 	desc->ucode_blob_base = nvkm_memory_addr(acr->wpr);
-	desc->ucode_blob_size = nvkm_memory_size(acr->wpr);
+	desc->ucode_blob_size = gv11b_nvblob_size ?: nvkm_memory_size(acr->wpr);
 	flcn_acr_desc_v1_dump(&acr->subdev, desc);
 	return 0;
 }
@@ -39,6 +46,15 @@ static int
 gv11b_acr_load_boot(struct nvkm_falcon_fw *fw, u32 *mbox0, u32 *mbox1,
 		    u32 mbox0_ok, u32 irqsclr)
 {
+	/* XXX test: PMU registers nvgpu writes before the HS boot (R35 trace),
+	 * undocumented, values look like clock-gating controls. */
+	nvkm_falcon_wr32(fw->falcon, 0x134, 0x00020008);
+	nvkm_falcon_wr32(fw->falcon, 0xa74, 0x00004040);
+	nvkm_falcon_wr32(fw->falcon, 0xe74, 0x00000000);
+	nvkm_falcon_wr32(fw->falcon, 0xa70, 0x00000045);
+	nvkm_mask(fw->falcon->owner->device, 0x100c80, 0x00000800, 0x00000000);
+	/* nvgpu masks all PMU interrupts before the HS boot (R35 trace). */
+	nvkm_falcon_wr32(fw->falcon, 0x014, 0xffffffff);
 	nvkm_falcon_wr32(fw->falcon, 0x10c, 0x00000000);
 	return gm200_flcn_fw_boot(fw, mbox0, mbox1, mbox0_ok, irqsclr);
 }
@@ -88,12 +104,54 @@ gv11b_acr_wpr_build(struct nvkm_acr *acr, struct nvkm_acr_lsf *rtos)
 		if (ret)
 			return ret;
 
+		/*
+		 * nvgpu (lsfm_fill_static_lsb_hdr_info) fills app_code/app_data
+		 * only for non-PMU falcons; the PMU entry leaves them zero.
+		 */
+		if (lsfw->id == NVKM_ACR_LSF_PMU) {
+			u32 tail = lsfw->offset.lsb + sizeof(struct lsf_signature_v1);
+
+			nvkm_wo32(acr->wpr, tail + offsetof(struct lsb_header_tail, app_code_off), 0);
+			nvkm_wo32(acr->wpr, tail + offsetof(struct lsb_header_tail, app_code_size), 0);
+			nvkm_wo32(acr->wpr, tail + offsetof(struct lsb_header_tail, app_data_off), 0);
+			nvkm_wo32(acr->wpr, tail + offsetof(struct lsb_header_tail, app_data_size), 0);
+		}
+
 		nvkm_wobj(acr->wpr, lsfw->offset.img, lsfw->img.data, lsfw->img.size);
 		lsfw->func->bld_write(acr, lsfw->offset.bld, lsfw);
 	}
 
 	nvkm_wo32(acr->wpr, offset, WPR_HEADER_V1_FALCON_ID_INVALID);
+
+	if (nvblob) {
+		const struct firmware *fw;
+
+		ret = nvkm_firmware_get(&acr->subdev, "acr/nv_blob", 0, &fw);
+		if (ret)
+			return ret;
+		if (fw->size > nvkm_memory_size(acr->wpr)) {
+			nvkm_firmware_put(fw);
+			return -ENOSPC;
+		}
+		nvkm_wobj(acr->wpr, 0, fw->data, fw->size);
+		gv11b_nvblob_size = fw->size;
+		nvkm_warn(&acr->subdev, "XXX using NVIDIA blob (%zu bytes)\n", fw->size);
+		nvkm_firmware_put(fw);
+	}
 	return 0;
+}
+
+/* NVIDIA's blob already holds WPR-absolute addresses: do not patch it. */
+static int
+gv11b_acr_wpr_patch(struct nvkm_acr *acr, s64 adjust)
+{
+	return gv11b_nvblob_size ? 0 : gp102_acr_wpr_patch(acr, adjust);
+}
+
+static int
+gv11b_acr_wpr_alloc(struct nvkm_acr *acr, u32 wpr_size)
+{
+	return gm20b_acr_wpr_alloc(acr, nvblob ? max_t(u32, wpr_size, 0x30000) : wpr_size);
 }
 
 static const struct nvkm_acr_func
@@ -101,9 +159,9 @@ gv11b_acr = {
 	.load = gv11b_acr_load_fwif,
 	.wpr_parse = gp102_acr_wpr_parse,
 	.wpr_layout = gp102_acr_wpr_layout,
-	.wpr_alloc = gm20b_acr_wpr_alloc,
+	.wpr_alloc = gv11b_acr_wpr_alloc,
 	.wpr_build = gv11b_acr_wpr_build,
-	.wpr_patch = gp102_acr_wpr_patch,
+	.wpr_patch = gv11b_acr_wpr_patch,
 	.wpr_check = gm200_acr_wpr_check,
 	.init = gm200_acr_init,
 };
