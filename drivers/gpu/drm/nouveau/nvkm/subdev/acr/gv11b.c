@@ -49,13 +49,47 @@ gv11b_acr_load_fwif[] = {
 	{}
 };
 
+/* gp102_acr_wpr_build, but the PMU (not SEC2) bootstraps the LS falcons. */
+static int
+gv11b_acr_wpr_build(struct nvkm_acr *acr, struct nvkm_acr_lsf *rtos)
+{
+	struct nvkm_acr_lsfw *lsfw;
+	u32 offset = 0;
+	int ret;
+
+	list_for_each_entry(lsfw, &acr->lsfw, head) {
+		struct lsf_signature_v1 *sig = (void *)lsfw->sig->data;
+		struct wpr_header_v1 hdr = {
+			.falcon_id = lsfw->id,
+			.lsb_offset = lsfw->offset.lsb,
+			.bootstrap_owner = NVKM_ACR_LSF_PMU,
+			.lazy_bootstrap = rtos && lsfw->id != rtos->id,
+			.bin_version = sig->version,
+			.status = WPR_HEADER_V1_STATUS_COPY,
+		};
+
+		nvkm_wobj(acr->wpr, offset, &hdr, sizeof(hdr));
+		offset += sizeof(hdr);
+
+		ret = gp102_acr_wpr_build_lsb(acr, lsfw);
+		if (ret)
+			return ret;
+
+		nvkm_wobj(acr->wpr, lsfw->offset.img, lsfw->img.data, lsfw->img.size);
+		lsfw->func->bld_write(acr, lsfw->offset.bld, lsfw);
+	}
+
+	nvkm_wo32(acr->wpr, offset, WPR_HEADER_V1_FALCON_ID_INVALID);
+	return 0;
+}
+
 static const struct nvkm_acr_func
 gv11b_acr = {
 	.load = gv11b_acr_load_fwif,
 	.wpr_parse = gp102_acr_wpr_parse,
 	.wpr_layout = gp102_acr_wpr_layout,
 	.wpr_alloc = gm20b_acr_wpr_alloc,
-	.wpr_build = gp102_acr_wpr_build,
+	.wpr_build = gv11b_acr_wpr_build,
 	.wpr_patch = gp102_acr_wpr_patch,
 	.wpr_check = gm200_acr_wpr_check,
 	.init = gm200_acr_init,

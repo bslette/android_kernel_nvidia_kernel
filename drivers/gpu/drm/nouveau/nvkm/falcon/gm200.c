@@ -227,6 +227,19 @@ gm200_flcn_fw_boot(struct nvkm_falcon_fw *fw, u32 *pmbox0, u32 *pmbox1, u32 mbox
 
 	nvkm_falcon_wr32(falcon, 0x104, fw->boot_addr);
 	nvkm_falcon_wr32(falcon, 0x100, 0x00000002);
+	{	/* XXX gv11b bring-up diagnostics: PC via ICD (RREG idx 21) */
+		u32 pc[3], cpu[3];
+		int i;
+		for (i = 0; i < 3; i++) {
+			cpu[i] = nvkm_falcon_rd32(falcon, 0x100);
+			nvkm_falcon_wr32(falcon, 0x200, 0x0000150e);
+			pc[i] = nvkm_falcon_rd32(falcon, 0x20c);
+			if (i == 0) udelay(5); else mdelay(50);
+		}
+		FLCN_DBG(falcon, "start: bootvec %x cpuctl %08x/%08x/%08x pc %08x/%08x/%08x mbox0 %08x",
+			 fw->boot_addr, cpu[0], cpu[1], cpu[2], pc[0], pc[1], pc[2],
+			 nvkm_falcon_rd32(falcon, 0x040));
+	}
 
 	if (nvkm_msec(falcon->owner->device, 2000,
 		if (nvkm_falcon_rd32(falcon, 0x100) & 0x00000010)
@@ -236,6 +249,13 @@ gm200_flcn_fw_boot(struct nvkm_falcon_fw *fw, u32 *pmbox0, u32 *pmbox1, u32 mbox
 
 	mbox0 = nvkm_falcon_rd32(falcon, 0x040);
 	mbox1 = nvkm_falcon_rd32(falcon, 0x044);
+	/* XXX gv11b bring-up diagnostics */
+	FLCN_DBG(falcon, "boot: cpuctl %08x sctl %08x exci %08x irqstat %08x os %08x "
+		 "dmactl %08x hwcfg %08x",
+		 nvkm_falcon_rd32(falcon, 0x100), nvkm_falcon_rd32(falcon, 0x240),
+		 nvkm_falcon_rd32(falcon, 0x16c), nvkm_falcon_rd32(falcon, 0x008),
+		 nvkm_falcon_rd32(falcon, 0x080), nvkm_falcon_rd32(falcon, 0x10c),
+		 nvkm_falcon_rd32(falcon, 0x108));
 	if (FLCN_ERRON(falcon, ret || mbox0 != mbox0_ok, "mbox %08x %08x", mbox0, mbox1))
 		ret = ret ?: -EIO;
 
@@ -270,8 +290,22 @@ gm200_flcn_fw_load(struct nvkm_falcon_fw *fw)
 		if (nvkm_msec(falcon->owner->device, 10,
 			if (falcon->func->bind_stat(falcon, falcon->func->bind_intr) == 5)
 				break;
-		) < 0)
+		) < 0) {
+			/* XXX gv11b bring-up diagnostics */
+			FLCN_ERR(falcon, "bind timeout: target %d inst %llx stat %d "
+				 "0x008 %08x 0x048 %08x 0x054 %08x 0x090 %08x 0x0dc %08x 0x100 %08x "
+				 "0x480 %08x 0x604 %08x 0xe00 %08x %08x %08x %08x %08x",
+				 target, nvkm_memory_addr(fw->inst),
+				 falcon->func->bind_stat(falcon, false),
+				 nvkm_falcon_rd32(falcon, 0x008), nvkm_falcon_rd32(falcon, 0x048),
+				 nvkm_falcon_rd32(falcon, 0x054), nvkm_falcon_rd32(falcon, 0x090),
+				 nvkm_falcon_rd32(falcon, 0x0dc), nvkm_falcon_rd32(falcon, 0x100),
+				 nvkm_falcon_rd32(falcon, 0x480), nvkm_falcon_rd32(falcon, 0x604),
+				 nvkm_falcon_rd32(falcon, 0xe00), nvkm_falcon_rd32(falcon, 0xe04),
+				 nvkm_falcon_rd32(falcon, 0xe08), nvkm_falcon_rd32(falcon, 0xe0c),
+				 nvkm_falcon_rd32(falcon, 0xe10));
 			return -ETIMEDOUT;
+		}
 
 		nvkm_falcon_mask(falcon, 0x004, 0x00000008, 0x00000008);
 		nvkm_falcon_mask(falcon, 0x058, 0x00000002, 0x00000002);

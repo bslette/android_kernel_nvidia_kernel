@@ -98,6 +98,49 @@ gv11b_pmu_acr = {
 	.bootstrap_multiple_falcons = gv11b_pmu_acr_bootstrap_multiple_falcons,
 };
 
+/*
+ * Volta PMU falcon: same as GM20B/GP10B apart from the bind handling above.
+ */
+/*
+ * nvgpu (gv11b_pmu_bootstrap) writes the instance block and starts loading
+ * without waiting for a bind state; here the bind state (0x0dc[14:12]) stays
+ * at 1 until the falcon issues DMA, so report the states gm200_flcn_fw_load
+ * waits for instead of polling.
+ */
+static int
+gv11b_pmu_flcn_bind_stat(struct nvkm_falcon *falcon, bool intr)
+{
+	return intr ? 5 : 0;
+}
+
+static const struct nvkm_falcon_func
+gv11b_pmu_flcn = {
+	.disable = gm200_flcn_disable,
+	.enable = gm200_flcn_enable,
+	.reset_pmc = true,
+	.reset_wait_mem_scrubbing = gm200_flcn_reset_wait_mem_scrubbing,
+	.debug = 0xc08,
+	.bind_inst = gm200_pmu_flcn_bind_inst,
+	.bind_stat = gv11b_pmu_flcn_bind_stat,
+	.bind_intr = true,
+	.imem_pio = &gm200_flcn_imem_pio,
+	.dmem_pio = &gm200_flcn_dmem_pio,
+	.start = nvkm_falcon_v1_start,
+	.cmdq = { 0x4a0, 0x4b0, 4 },
+	.msgq = { 0x4c8, 0x4cc, 0 },
+};
+
+static const struct nvkm_pmu_func
+gv11b_pmu = {
+	.flcn = &gv11b_pmu_flcn,
+	.init = gm20b_pmu_init,
+	.fini = gm20b_pmu_fini,
+	.intr = gt215_pmu_intr,
+	.recv = gm20b_pmu_recv,
+	.initmsg = gm20b_pmu_initmsg,
+	.reset = gf100_pmu_reset,
+};
+
 static int
 gv11b_pmu_load(struct nvkm_pmu *pmu, int ver, const struct nvkm_pmu_fwif *fwif)
 {
@@ -112,8 +155,8 @@ MODULE_FIRMWARE("nvidia/gv11b/pmu/sig.bin");
 
 static const struct nvkm_pmu_fwif
 gv11b_pmu_fwif[] = {
-	{  0, gv11b_pmu_load, &gm20b_pmu, &gv11b_pmu_acr },
-	{ -1, gm200_pmu_nofw, &gm20b_pmu },
+	{  0, gv11b_pmu_load, &gv11b_pmu, &gv11b_pmu_acr },
+	{ -1, gm200_pmu_nofw, &gv11b_pmu },
 	{}
 };
 
