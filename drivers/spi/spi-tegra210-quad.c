@@ -1358,8 +1358,14 @@ static irqreturn_t handle_cpu_based_xfer(struct tegra_qspi *tqspi)
 		goto exit;
 	}
 
+	/*
+	 * More data to move: start the next FIFO-sized chunk. Its completion
+	 * interrupt still belongs to this transfer, so keep curr_xfer set.
+	 */
 	tegra_qspi_calculate_curr_xfer_param(tqspi, t);
 	tegra_qspi_start_cpu_based_transfer(tqspi, t);
+	spin_unlock_irqrestore(&tqspi->lock, flags);
+	return IRQ_HANDLED;
 exit:
 	tqspi->curr_xfer = NULL;
 	spin_unlock_irqrestore(&tqspi->lock, flags);
