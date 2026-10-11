@@ -50,12 +50,29 @@ gp10b_vmm_new(struct nvkm_mmu *mmu, bool managed, u64 addr, u64 size,
 			      argv, argc, key, name, pvmm);
 }
 
-/* GV11B: GP10B's sysmem-only layout, Volta instance blocks (subcontext PDBs). */
+/* Tegra194 is IO-coherent: map all sysmem as coherent (aperture 2). */
+static int
+gv11b_vmm_aper(enum nvkm_memory_target target)
+{
+	switch (target) {
+	case NVKM_MEM_TARGET_HOST:
+	case NVKM_MEM_TARGET_NCOH: return 2;
+	default:
+		return -EINVAL;
+	}
+}
+
+/*
+ * GV11B: GP10B's sysmem-only layout, Volta instance blocks (subcontext PDBs),
+ * and real sysmem apertures in PTEs: unlike earlier Tegra GPUs, GV11B faults
+ * the VRAM aperture (MMU fault type 0xa, UNSUPPORTED_APERTURE, on the PMU's
+ * first ACR code DMA).
+ */
 static const struct nvkm_vmm_func
 gv11b_vmm = {
 	.join = gv100_vmm_join,
 	.part = gf100_vmm_part,
-	.aper = gk20a_vmm_aper,
+	.aper = gv11b_vmm_aper,
 	.valid = gp100_vmm_valid,
 	.flush = gp100_vmm_flush,
 	.mthd = gp100_vmm_mthd,

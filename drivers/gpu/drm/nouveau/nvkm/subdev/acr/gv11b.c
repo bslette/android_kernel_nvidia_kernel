@@ -30,6 +30,19 @@ gv11b_acr_load_setup(struct nvkm_falcon_fw *fw)
 	return 0;
 }
 
+/*
+ * nvgpu (gk20a_falcon_bootstrap) clears DMACTL.REQUIRE_CTX right before
+ * starting the HS bootloader. With it left set, the HS ACR entered secure
+ * mode and then spun at PC 0x2ef with the DMA engine idle.
+ */
+static int
+gv11b_acr_load_boot(struct nvkm_falcon_fw *fw, u32 *mbox0, u32 *mbox1,
+		    u32 mbox0_ok, u32 irqsclr)
+{
+	nvkm_falcon_wr32(fw->falcon, 0x10c, 0x00000000);
+	return gm200_flcn_fw_boot(fw, mbox0, mbox1, mbox0_ok, irqsclr);
+}
+
 static const struct nvkm_falcon_fw_func
 gv11b_acr_load_0 = {
 	.signature = gm200_flcn_fw_signature,
@@ -37,7 +50,7 @@ gv11b_acr_load_0 = {
 	.setup = gv11b_acr_load_setup,
 	.load = gm200_flcn_fw_load,
 	.load_bld = gm200_acr_hsfw_load_bld,
-	.boot = gm200_flcn_fw_boot,
+	.boot = gv11b_acr_load_boot,
 };
 
 MODULE_FIRMWARE("nvidia/gv11b/acr/bl.bin");

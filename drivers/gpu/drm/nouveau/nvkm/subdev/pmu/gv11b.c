@@ -99,30 +99,42 @@ gv11b_pmu_acr = {
 };
 
 /*
- * Volta PMU falcon: same as GM20B/GP10B apart from the bind handling above.
+ * Volta PMU falcon: as GM20B/GP10B, but the bind status is read directly
+ * (0x0dc) as for GP102+ falcons, and reset goes through the falcon's own
+ * ENGINE register (0x3c0) as nvgpu does from GP10x on
+ * (gp106_pmu_engine_reset). With the PMC-only reset the core never left
+ * reset: cpuctl stayed 0x12 (HALTED with STARTCPU pending).
  */
 /*
- * nvgpu (gv11b_pmu_bootstrap) writes the instance block and starts loading
- * without waiting for a bind state; here the bind state (0x0dc[14:12]) stays
- * at 1 until the falcon issues DMA, so report the states gm200_flcn_fw_load
- * waits for instead of polling.
+ * Like gm200_pmu_flcn_bind_inst, but the physical DMA indices point at
+ * system memory (gv11b_setup_apertures in nvgpu): GV11B has no VRAM and
+ * faults the local-FB aperture, which left the HS ACR stuck once it started
+ * copying the LS blob into the WPR.
  */
-static int
-gv11b_pmu_flcn_bind_stat(struct nvkm_falcon *falcon, bool intr)
+static void
+gv11b_pmu_flcn_bind_inst(struct nvkm_falcon *falcon, int target, u64 addr)
 {
-	return intr ? 5 : 0;
+	nvkm_falcon_wr32(falcon, 0xe00, 5); /* DMAIDX_UCODE: physical, coh sysmem */
+	nvkm_falcon_wr32(falcon, 0xe04, 0); /* DMAIDX_VIRT */
+	nvkm_falcon_wr32(falcon, 0xe08, 5); /* DMAIDX_PHYS_VID: physical, coh sysmem */
+	nvkm_falcon_wr32(falcon, 0xe0c, 5); /* DMAIDX_PHYS_SYS_COH */
+	nvkm_falcon_wr32(falcon, 0xe10, 6); /* DMAIDX_PHYS_SYS_NCOH */
+	nvkm_falcon_mask(falcon, 0x090, 0x00010000, 0x00010000);
+	/* Tegra194 is IO-coherent (NVGPU_USE_COHERENT_SYSMEM in nvgpu). */
+	if (target == 3)
+		target = 2;
+	nvkm_falcon_wr32(falcon, 0x480, (1 << 30) | (target << 28) | (addr >> 12));
 }
 
 static const struct nvkm_falcon_func
 gv11b_pmu_flcn = {
 	.disable = gm200_flcn_disable,
 	.enable = gm200_flcn_enable,
-	.reset_pmc = true,
+	.reset_eng = gp102_flcn_reset_eng,
 	.reset_wait_mem_scrubbing = gm200_flcn_reset_wait_mem_scrubbing,
 	.debug = 0xc08,
-	.bind_inst = gm200_pmu_flcn_bind_inst,
-	.bind_stat = gv11b_pmu_flcn_bind_stat,
-	.bind_intr = true,
+	.bind_inst = gv11b_pmu_flcn_bind_inst,
+	.bind_stat = gm200_flcn_bind_stat,
 	.imem_pio = &gm200_flcn_imem_pio,
 	.dmem_pio = &gm200_flcn_dmem_pio,
 	.start = nvkm_falcon_v1_start,

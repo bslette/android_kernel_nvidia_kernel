@@ -249,13 +249,35 @@ gm200_flcn_fw_boot(struct nvkm_falcon_fw *fw, u32 *pmbox0, u32 *pmbox1, u32 mbox
 
 	mbox0 = nvkm_falcon_rd32(falcon, 0x040);
 	mbox1 = nvkm_falcon_rd32(falcon, 0x044);
+	{	/* XXX gv11b bring-up diagnostics: PC trace buffer */
+		u32 idx = nvkm_falcon_rd32(falcon, 0x148), n = (idx >> 16) & 0xff, i;
+		struct nvkm_device *device = falcon->owner->device;
+		FLCN_DBG(falcon, "trace: idx %08x", idx);
+		FLCN_DBG(falcon, "dma: trfbase %08x moffs %08x cmd %08x fboffs %08x base1 %08x "
+			 "fbif_ctl %08x fbif_stat %08x mbox1 %08x",
+			 nvkm_falcon_rd32(falcon, 0x110), nvkm_falcon_rd32(falcon, 0x114),
+			 nvkm_falcon_rd32(falcon, 0x118), nvkm_falcon_rd32(falcon, 0x11c),
+			 nvkm_falcon_rd32(falcon, 0x128), nvkm_falcon_rd32(falcon, 0x624),
+			 nvkm_falcon_rd32(falcon, 0x620), nvkm_falcon_rd32(falcon, 0x044));
+		/* Volta MMU fault registers (fb_mmu_fault_*) */
+		FLCN_DBG(falcon, "mmu fault: addr %08x:%08x inst %08x:%08x info %08x status %08x "
+			 "mmu_ctrl %08x pri_fault %08x",
+			 nvkm_rd32(device, 0x100e50), nvkm_rd32(device, 0x100e4c),
+			 nvkm_rd32(device, 0x100e58), nvkm_rd32(device, 0x100e54),
+			 nvkm_rd32(device, 0x100e5c), nvkm_rd32(device, 0x100e60),
+			 nvkm_rd32(device, 0x100c80), nvkm_rd32(device, 0x100a2c));
+		for (i = 0; i < n && i < 16; i++) {
+			nvkm_falcon_wr32(falcon, 0x148, i);
+			FLCN_DBG(falcon, "trace[%2d] pc %08x", i, nvkm_falcon_rd32(falcon, 0x14c));
+		}
+	}
 	/* XXX gv11b bring-up diagnostics */
 	FLCN_DBG(falcon, "boot: cpuctl %08x sctl %08x exci %08x irqstat %08x os %08x "
-		 "dmactl %08x hwcfg %08x",
+		 "dmactl %08x hwcfg %08x engine %08x",
 		 nvkm_falcon_rd32(falcon, 0x100), nvkm_falcon_rd32(falcon, 0x240),
 		 nvkm_falcon_rd32(falcon, 0x16c), nvkm_falcon_rd32(falcon, 0x008),
 		 nvkm_falcon_rd32(falcon, 0x080), nvkm_falcon_rd32(falcon, 0x10c),
-		 nvkm_falcon_rd32(falcon, 0x108));
+		 nvkm_falcon_rd32(falcon, 0x108), nvkm_falcon_rd32(falcon, 0x3c0));
 	if (FLCN_ERRON(falcon, ret || mbox0 != mbox0_ok, "mbox %08x %08x", mbox0, mbox1))
 		ret = ret ?: -EIO;
 
