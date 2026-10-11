@@ -153,7 +153,7 @@ gv11b_pmu_flcn = {
 	.imem_pio = &gm200_flcn_imem_pio,
 	.dmem_pio = &gm200_flcn_dmem_pio,
 	.start = nvkm_falcon_v1_start,
-	.cmdq = { 0x4a0, 0x4b0, 4 },
+	.cmdq = { 0x800, 0x820, 8 },	/* pwr_pmu_queue_head/tail_r(i), gv11b */
 	.msgq = { 0x4c8, 0x4cc, 0 },
 };
 
@@ -200,6 +200,51 @@ gv11b_pmu_init(struct nvkm_pmu *pmu)
 	return 0;
 }
 
+/*
+ * Init message as posted by the GV11B PMU firmware (layout checked against
+ * the 48 bytes read back from DMEM: pmu_init_msg_pmu_v4 + 2 bytes padding).
+ * Queues are contiguous from queue_offset in index order.
+ */
+struct gv11b_pmu_init_msg {
+	struct nvfw_falcon_msg hdr;
+	u8 msg_type;
+	u8 queue_index[5];
+	u16 queue_size[5];
+	u16 queue_offset;
+	u16 sw_managed_area_offset;
+	u16 sw_managed_area_size;
+	u16 os_debug_entry_point;
+	u8 dummy[20];
+} __packed;
+
+static int
+gv11b_pmu_initmsg(struct nvkm_pmu *pmu)
+{
+	struct gv11b_pmu_init_msg msg;
+	u32 off[5];
+	int ret, i;
+
+	BUILD_BUG_ON(sizeof(msg) != 48);
+	ret = nvkm_falcon_msgq_recv_initmsg(pmu->msgq, &msg, sizeof(msg));
+	if (ret)
+		return ret;
+
+	if (msg.hdr.unit_id != NV_PMU_UNIT_INIT || msg.msg_type != NV_PMU_INIT_MSG_INIT)
+		return -EINVAL;
+
+	off[0] = msg.queue_offset;
+	for (i = 1; i < 5; i++)
+		off[i] = off[i - 1] + msg.queue_size[i - 1];
+	for (i = 0; i < 5; i++)
+		nvkm_debug(&pmu->subdev, "queue %d: index %d offset %#x size %#x\n",
+			   i, msg.queue_index[i], off[i], msg.queue_size[i]);
+
+	nvkm_falcon_cmdq_init(pmu->hpq, msg.queue_index[0], off[0], msg.queue_size[0]);
+	nvkm_falcon_cmdq_init(pmu->lpq, msg.queue_index[1], off[1], msg.queue_size[1]);
+	nvkm_falcon_msgq_init(pmu->msgq, msg.queue_index[4], off[4], msg.queue_size[4]);
+	return gm20b_pmu_acr_init_wpr(pmu);
+}
+
 static const struct nvkm_pmu_func
 gv11b_pmu = {
 	.flcn = &gv11b_pmu_flcn,
@@ -207,7 +252,7 @@ gv11b_pmu = {
 	.fini = gm20b_pmu_fini,
 	.intr = gt215_pmu_intr,
 	.recv = gm20b_pmu_recv,
-	.initmsg = gm20b_pmu_initmsg,
+	.initmsg = gv11b_pmu_initmsg,
 	.reset = gf100_pmu_reset,
 };
 

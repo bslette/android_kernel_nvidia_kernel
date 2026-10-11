@@ -140,7 +140,7 @@ gm20b_pmu_acr_init_wpr_callback(void *priv, struct nvfw_falcon_msg *hdr)
 	return 0;
 }
 
-static int
+int
 gm20b_pmu_acr_init_wpr(struct nvkm_pmu *pmu)
 {
 	struct nv_pmu_acr_init_wpr_region_cmd cmd = {
