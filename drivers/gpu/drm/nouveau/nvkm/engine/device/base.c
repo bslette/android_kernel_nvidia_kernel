@@ -2307,6 +2307,7 @@ nv13b_chipset = {
 static const struct nvkm_device_chip
 nv15b_chipset = {
 	.name = "GV11B",
+	.acr      = { 0x00000001, gv11b_acr_new },
 	.bar      = { 0x00000001, gm20b_bar_new },
 	.bus      = { 0x00000001, gf100_bus_new },
 	.fb       = { 0x00000001, gp10b_fb_new },
@@ -2315,6 +2316,7 @@ nv15b_chipset = {
 	.ltc      = { 0x00000001, gp10b_ltc_new },
 	.mc       = { 0x00000001, gp10b_mc_new },
 	.mmu      = { 0x00000001, gp10b_mmu_new },
+	.pmu      = { 0x00000001, gv11b_pmu_new },
 	.privring = { 0x00000001, gp10b_privring_new },
 	.timer    = { 0x00000001, gk20a_timer_new },
 	.top      = { 0x00000001, gk104_top_new },

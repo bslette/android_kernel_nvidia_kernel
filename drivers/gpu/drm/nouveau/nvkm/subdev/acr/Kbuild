@@ -7,6 +7,7 @@ nvkm-y += nvkm/subdev/acr/gp102.o
 nvkm-y += nvkm/subdev/acr/gp108.o
 nvkm-y += nvkm/subdev/acr/gv100.o
 nvkm-y += nvkm/subdev/acr/gp10b.o
+nvkm-y += nvkm/subdev/acr/gv11b.o
 nvkm-y += nvkm/subdev/acr/tu102.o
 nvkm-y += nvkm/subdev/acr/ga100.o
 nvkm-y += nvkm/subdev/acr/ga102.o
