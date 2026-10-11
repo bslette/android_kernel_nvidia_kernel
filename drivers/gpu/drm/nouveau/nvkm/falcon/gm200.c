@@ -253,6 +253,35 @@ gm200_flcn_fw_boot(struct nvkm_falcon_fw *fw, u32 *pmbox0, u32 *pmbox1, u32 mbox
 		u32 idx = nvkm_falcon_rd32(falcon, 0x148), n = (idx >> 16) & 0xff, i;
 		struct nvkm_device *device = falcon->owner->device;
 		FLCN_DBG(falcon, "trace: idx %08x", idx);
+		FLCN_DBG(falcon, "flush: 100c10 %08x 100c40 %08x 70000 %08x 70004 %08x 70010 %08x "
+			 "70014 %08x wpr 100cd4 %08x 100cd8 %08x 100cdc %08x 100ce0 %08x 100ce4 %08x",
+			 nvkm_rd32(device, 0x100c10), nvkm_rd32(device, 0x100c40),
+			 nvkm_rd32(device, 0x070000), nvkm_rd32(device, 0x070004),
+			 nvkm_rd32(device, 0x070010), nvkm_rd32(device, 0x070014),
+			 nvkm_rd32(device, 0x100cd4), nvkm_rd32(device, 0x100cd8),
+			 nvkm_rd32(device, 0x100cdc), nvkm_rd32(device, 0x100ce0),
+			 nvkm_rd32(device, 0x100ce4));
+		FLCN_DBG(falcon, "pmc: boot0 %08x enable 200 %08x dev_enable 600 %08x intr 100 %08x 104 %08x "
+			 "fecs cpuctl %08x gpccs cpuctl %08x",
+			 nvkm_rd32(device, 0x000000), nvkm_rd32(device, 0x000200),
+			 nvkm_rd32(device, 0x000600), nvkm_rd32(device, 0x000100),
+			 nvkm_rd32(device, 0x000104), nvkm_rd32(device, 0x409100),
+			 nvkm_rd32(device, 0x41a100));
+		{	/* XXX diff against NVIDIA R35 pre-ACR register state */
+			static const struct { u32 addr, val; } nvref[] = {
+#include "gv11b_nvref.inc"
+			};
+			int j, diff = 0;
+			for (j = 0; j < ARRAY_SIZE(nvref); j++) {
+				u32 v = nvkm_rd32(device, nvref[j].addr);
+				if (v != nvref[j].val) {
+					FLCN_DBG(falcon, "nvref %06x nv %08x nouveau %08x",
+						 nvref[j].addr, nvref[j].val, v);
+					diff++;
+				}
+			}
+			FLCN_DBG(falcon, "nvref: %d of %zu differ", diff, ARRAY_SIZE(nvref));
+		}
 		FLCN_DBG(falcon, "dma: trfbase %08x moffs %08x cmd %08x fboffs %08x base1 %08x "
 			 "fbif_ctl %08x fbif_stat %08x mbox1 %08x",
 			 nvkm_falcon_rd32(falcon, 0x110), nvkm_falcon_rd32(falcon, 0x114),

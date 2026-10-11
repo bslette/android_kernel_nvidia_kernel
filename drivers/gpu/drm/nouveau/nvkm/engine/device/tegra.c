@@ -48,6 +48,10 @@ nvkm_device_tegra_power_up(struct nvkm_device_tegra *tdev)
 	if (ret)
 		goto err_clk_pwr;
 	clk_set_rate(tdev->clk_pwr, 204000000);
+	/* GV11B: nvgpu enables the GPU fuse clock (at max rate) as well. */
+	ret = clk_prepare_enable(tdev->clk_fuse);
+	if (ret)
+		goto err_clk_fuse;
 	udelay(10);
 
 	if (!tdev->pdev->dev.pm_domain) {
@@ -66,6 +70,8 @@ nvkm_device_tegra_power_up(struct nvkm_device_tegra *tdev)
 	return 0;
 
 err_clamp:
+	clk_disable_unprepare(tdev->clk_fuse);
+err_clk_fuse:
 	clk_disable_unprepare(tdev->clk_pwr);
 err_clk_pwr:
 	clk_disable_unprepare(tdev->clk_ref);
@@ -83,6 +89,7 @@ nvkm_device_tegra_power_down(struct nvkm_device_tegra *tdev)
 {
 	int ret;
 
+	clk_disable_unprepare(tdev->clk_fuse);
 	clk_disable_unprepare(tdev->clk_pwr);
 	clk_disable_unprepare(tdev->clk_ref);
 	clk_disable_unprepare(tdev->clk);
@@ -296,6 +303,14 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 		ret = PTR_ERR(tdev->clk_pwr);
 		goto free;
 	}
+
+	tdev->clk_fuse = devm_clk_get_optional(&pdev->dev, "fuse");
+	if (IS_ERR(tdev->clk_fuse)) {
+		ret = PTR_ERR(tdev->clk_fuse);
+		goto free;
+	}
+	if (tdev->clk_fuse)
+		clk_set_rate(tdev->clk_fuse, ULONG_MAX);
 
 	/**
 	 * The IOMMU bit defines the upper limit of the GPU-addressable space.
