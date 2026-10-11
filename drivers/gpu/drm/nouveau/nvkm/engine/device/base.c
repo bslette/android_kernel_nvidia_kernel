@@ -2299,6 +2299,27 @@ nv13b_chipset = {
 	.sw       = { 0x00000001, gf100_sw_new },
 };
 
+/*
+ * GV11B (Tegra194 / Xavier). Bring-up stage 1: only the units needed to
+ * power up, identify the chip and access registers; ACR, PMU, FIFO, CE and
+ * GR are added once the firmware path is proven on hardware.
+ */
+static const struct nvkm_device_chip
+nv15b_chipset = {
+	.name = "GV11B",
+	.bar      = { 0x00000001, gm20b_bar_new },
+	.bus      = { 0x00000001, gf100_bus_new },
+	.fb       = { 0x00000001, gp10b_fb_new },
+	.fuse     = { 0x00000001, gm107_fuse_new },
+	.imem     = { 0x00000001, gk20a_instmem_new },
+	.ltc      = { 0x00000001, gp10b_ltc_new },
+	.mc       = { 0x00000001, gp10b_mc_new },
+	.mmu      = { 0x00000001, gp10b_mmu_new },
+	.privring = { 0x00000001, gp10b_privring_new },
+	.timer    = { 0x00000001, gk20a_timer_new },
+	.top      = { 0x00000001, gk104_top_new },
+};
+
 static const struct nvkm_device_chip
 nv140_chipset = {
 	.name = "GV100",
@@ -3137,7 +3158,8 @@ nvkm_device_ctor(const struct nvkm_device_func *func,
 		case 0x110:
 		case 0x120: device->card_type = GM100; break;
 		case 0x130: device->card_type = GP100; break;
-		case 0x140: device->card_type = GV100; break;
+		case 0x140:
+		case 0x150: device->card_type = GV100; break;
 		case 0x160: device->card_type = TU100; break;
 		case 0x170: device->card_type = GA100; break;
 		case 0x190: device->card_type = AD100; break;
@@ -3233,6 +3255,7 @@ nvkm_device_ctor(const struct nvkm_device_func *func,
 	case 0x138: device->chip = &nv138_chipset; break;
 	case 0x13b: device->chip = &nv13b_chipset; break;
 	case 0x140: device->chip = &nv140_chipset; break;
+	case 0x15b: device->chip = &nv15b_chipset; break;
 	case 0x162: device->chip = &nv162_chipset; break;
 	case 0x164: device->chip = &nv164_chipset; break;
 	case 0x166: device->chip = &nv166_chipset; break;
