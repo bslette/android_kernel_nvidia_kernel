@@ -33,7 +33,7 @@ gm107_bar_bar1_wait(struct nvkm_bar *bar)
 	);
 }
 
-static void
+void
 gm107_bar_bar2_wait(struct nvkm_bar *bar)
 {
 	struct nvkm_device *device = bar->subdev.device;
