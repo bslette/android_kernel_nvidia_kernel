@@ -490,3 +490,67 @@ gv100_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 {
 	return nvkm_fifo_new_(&gv100_fifo, device, type, inst, pfifo);
 }
+
+/*
+ * GV11B: Tegra instmem has no BAR2 mappings yet, so the CE method buffer
+ * pointer (ram_in_eng_method_buffer_addr, inst+0x220) is left at 0. It is
+ * only used to save CE methods on a fault.
+ * XXX implement BAR2 for Tegra instmem and point this at a real buffer.
+ */
+static void
+gv11b_ectx_ce_bind(struct nvkm_engn *engn, struct nvkm_cctx *cctx, struct nvkm_chan *chan)
+{
+	nvkm_kmap(chan->inst);
+	nvkm_wo32(chan->inst, 0x220, 0x00000000);
+	nvkm_wo32(chan->inst, 0x224, 0x00000000);
+	nvkm_mo32(chan->inst, 0x0ac, 0x00020000, cctx ? 0x00020000 : 0x00000000);
+	nvkm_done(chan->inst);
+}
+
+static const struct nvkm_engn_func
+gv11b_engn_ce = {
+	.chsw = gk104_engn_chsw,
+	.cxid = gk104_engn_cxid,
+	.bind = gv11b_ectx_ce_bind,
+};
+
+/* GV11B (Tegra194): no VRAM, so USERD is FIFO-owned in BAR1 as on GK104/GP10B. */
+static const struct nvkm_chan_func
+gv11b_chan = {
+	.inst = &gf100_chan_inst,
+	.userd = &gk104_chan_userd,
+	.ramfc = &gv100_chan_ramfc,
+	.bind = gk104_chan_bind_inst,
+	.unbind = gk104_chan_unbind,
+	.start = gk104_chan_start,
+	.stop = gk104_chan_stop,
+	.preempt = gk110_chan_preempt,
+	.doorbell_handle = gv100_chan_doorbell_handle,
+};
+
+static const struct nvkm_fifo_func
+gv11b_fifo = {
+	.chid_nr = gm200_fifo_chid_nr,
+	.chid_ctor = gk110_fifo_chid_ctor,
+	.runq_nr = gm200_fifo_runq_nr,
+	.runl_ctor = gk104_fifo_runl_ctor,
+	.init = gk104_fifo_init,
+	.init_pbdmas = gk104_fifo_init_pbdmas,
+	.intr = gk104_fifo_intr,
+	.intr_ctxsw_timeout = gv100_fifo_intr_ctxsw_timeout,
+	.mmu_fault = &gv100_fifo_mmu_fault,
+	.nonstall = &gf100_fifo_nonstall,
+	.runl = &gv100_runl,
+	.runq = &gv100_runq,
+	.engn = &gv100_engn,
+	.engn_ce = &gv11b_engn_ce,
+	.cgrp = {{ 0, 0, KEPLER_CHANNEL_GROUP_A  }, &gk110_cgrp, .force = true },
+	.chan = {{ 0, 0,  VOLTA_CHANNEL_GPFIFO_A }, &gv11b_chan },
+};
+
+int
+gv11b_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+	       struct nvkm_fifo **pfifo)
+{
+	return nvkm_fifo_new_(&gv11b_fifo, device, type, inst, pfifo);
+}
