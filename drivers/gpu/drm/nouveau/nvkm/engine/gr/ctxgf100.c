@@ -23,8 +23,6 @@
  */
 #include "ctxgf100.h"
 
-bool nvkm_gr_nogolden;
-module_param_named(nogolden, nvkm_gr_nogolden, bool, 0644);
 
 #include <subdev/fb.h>
 #include <subdev/mc.h>
@@ -1438,12 +1436,6 @@ gf100_grctx_generate_main(struct gf100_gr_chan *chan)
 int
 gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvkm_gpuobj *inst)
 {
-	extern bool nvkm_gr_nogolden;
-
-	if (nvkm_gr_nogolden) {	/* XXX bring-up: stop before golden context */
-		nvkm_warn(&gr->base.engine.subdev, "XXX nogolden: skipping grctx generation\n");
-		return -ENODEV;
-	}
 	const struct gf100_grctx_func *grctx = gr->func->grctx;
 	struct nvkm_subdev *subdev = &gr->base.engine.subdev;
 	struct nvkm_device *device = subdev->device;
@@ -1491,8 +1483,6 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 	ret = nvkm_memory_map(data, 0, chan->vmm, ctx, NULL, 0);
 	if (ret)
 		goto done;
-	nvkm_warn(subdev, "XXX golden ctx image VA %llx+%llx (data %llx bytes)\n",
-		  ctx->addr, ctx->size, nvkm_memory_size(data));
 
 	/* Setup context pointer. */
 	nvkm_kmap(inst);
