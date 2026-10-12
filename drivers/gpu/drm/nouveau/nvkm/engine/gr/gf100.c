@@ -1616,6 +1616,12 @@ gf100_gr_ctxctl_isr(struct gf100_gr *gr)
 		stat &= ~0x00080000;
 	}
 
+	if (stat & 0x00000001) {
+		/* ctxsw_intr0: ucode error, code in mailbox 6 (as nvgpu reports). */
+		nvkm_error(subdev, "FECS ctxsw intr0, mailbox6 %08x\n",
+			   nvkm_rd32(device, 0x409818));
+	}
+
 	if (stat) {
 		nvkm_error(subdev, "FECS %08x\n", stat);
 		gf100_gr_ctxctl_debug(gr);
