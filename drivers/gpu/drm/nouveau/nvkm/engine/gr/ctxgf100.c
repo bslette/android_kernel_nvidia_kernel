@@ -1491,6 +1491,8 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 	ret = nvkm_memory_map(data, 0, chan->vmm, ctx, NULL, 0);
 	if (ret)
 		goto done;
+	nvkm_warn(subdev, "XXX golden ctx image VA %llx+%llx (data %llx bytes)\n",
+		  ctx->addr, ctx->size, nvkm_memory_size(data));
 
 	/* Setup context pointer. */
 	nvkm_kmap(inst);
@@ -1507,7 +1509,14 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 	 */
 	switch (nvkm_memory_target(inst->memory)) {
 	case NVKM_MEM_TARGET_HOST: addr |= 0x20000000; break;
-	case NVKM_MEM_TARGET_NCOH: addr |= 0x30000000; break;
+	case NVKM_MEM_TARGET_NCOH:
+		/*
+		 * nvgpu uses 3 (non-coherent) with uncached CPU mappings; on an
+		 * IO-coherent Tegra (GV11B) nouveau's instmem is cached, so FECS
+		 * must snoop.
+		 */
+		addr |= device->chipset == 0x15b ? 0x20000000 : 0x30000000;
+		break;
 	default:
 		break;
 	}

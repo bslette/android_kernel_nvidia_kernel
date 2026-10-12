@@ -26,6 +26,8 @@
 #include "runl.h"
 #include "runq.h"
 
+#include <engine/gr.h>
+
 #include <core/gpuobj.h>
 #include <subdev/mmu.h>
 
@@ -519,6 +521,31 @@ gv11b_engn_ce = {
  * (bits 29:28); gk104_chan_bind_inst leaves it 0 (VRAM), and the channel then
  * never answers a preempt (10 s nvkm_runl_preempt_wait timeouts).
  */
+/*
+ * GV11B: RAMFC's USERD address carries its aperture in bits 1:0
+ * (pbdma_userd_target_*); gv100 leaves 0 (VRAM). Use coherent sysmem.
+ */
+static int
+gv11b_chan_ramfc_write(struct nvkm_chan *chan, u64 offset, u64 length, u32 devm, bool priv)
+{
+	int ret = gv100_chan_ramfc_write(chan, offset, length, devm, priv);
+
+	if (ret)
+		return ret;
+
+	nvkm_kmap(chan->inst);
+	nvkm_mo32(chan->inst, 0x008, 0x00000003, 0x00000002);
+	nvkm_done(chan->inst);
+	return 0;
+}
+
+static const struct nvkm_chan_func_ramfc
+gv11b_chan_ramfc = {
+	.write = gv11b_chan_ramfc_write,
+	.devm = 0xfff,
+	.priv = true,
+};
+
 static void
 gv11b_chan_bind_inst(struct nvkm_chan *chan)
 {
@@ -546,7 +573,7 @@ static const struct nvkm_chan_func
 gv11b_chan = {
 	.inst = &gf100_chan_inst,
 	.userd = &gk104_chan_userd,
-	.ramfc = &gv100_chan_ramfc,
+	.ramfc = &gv11b_chan_ramfc,
 	.bind = gv11b_chan_bind_inst,
 	.unbind = gk104_chan_unbind,
 	.start = gk104_chan_start,
@@ -555,13 +582,38 @@ gv11b_chan = {
 	.doorbell_handle = gv100_chan_doorbell_handle,
 };
 
+/*
+ * nvgpu initialises GR (incl. its engine reset) at power-on, before any
+ * channel exists. nouveau inits GR lazily on the first GR object, after the
+ * DRM's kernel channel is already resident, and the reset then hits the
+ * loaded PBDMA (ENG_RESET, intr 0x01000000) and the golden save times out.
+ * Take a permanent GR reference here, before channels can be created.
+ */
+static void
+gv11b_fifo_init(struct nvkm_fifo *fifo)
+{
+	struct nvkm_device *device = fifo->engine.subdev.device;
+	static bool gr_ref;
+
+	if (!gr_ref && device->gr) {
+		struct nvkm_engine *gr = nvkm_engine_ref(&device->gr->engine);
+
+		if (IS_ERR(gr))
+			nvkm_error(&fifo->engine.subdev, "early GR init failed: %ld\n", PTR_ERR(gr));
+		else
+			gr_ref = true;
+	}
+
+	gk104_fifo_init(fifo);
+}
+
 static const struct nvkm_fifo_func
 gv11b_fifo = {
 	.chid_nr = gm200_fifo_chid_nr,
 	.chid_ctor = gk110_fifo_chid_ctor,
 	.runq_nr = gm200_fifo_runq_nr,
 	.runl_ctor = gk104_fifo_runl_ctor,
-	.init = gk104_fifo_init,
+	.init = gv11b_fifo_init,
 	.init_pbdmas = gk104_fifo_init_pbdmas,
 	.intr = gk104_fifo_intr,
 	.intr_ctxsw_timeout = gv100_fifo_intr_ctxsw_timeout,
