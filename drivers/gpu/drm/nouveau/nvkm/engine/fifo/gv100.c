@@ -26,6 +26,9 @@
 #include "runl.h"
 #include "runq.h"
 
+#include <engine/gr.h>
+#include <subdev/mc.h>
+
 #include <core/gpuobj.h>
 #include <subdev/mmu.h>
 
@@ -489,4 +492,207 @@ gv100_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	       struct nvkm_fifo **pfifo)
 {
 	return nvkm_fifo_new_(&gv100_fifo, device, type, inst, pfifo);
+}
+
+/*
+ * GV11B: Tegra instmem has no BAR2 mappings yet, so the CE method buffer
+ * pointer (ram_in_eng_method_buffer_addr, inst+0x220) is left at 0. It is
+ * only used to save CE methods on a fault.
+ * XXX implement BAR2 for Tegra instmem and point this at a real buffer.
+ */
+static void
+gv11b_ectx_ce_bind(struct nvkm_engn *engn, struct nvkm_cctx *cctx, struct nvkm_chan *chan)
+{
+	nvkm_kmap(chan->inst);
+	nvkm_wo32(chan->inst, 0x220, 0x00000000);
+	nvkm_wo32(chan->inst, 0x224, 0x00000000);
+	nvkm_mo32(chan->inst, 0x0ac, 0x00020000, cctx ? 0x00020000 : 0x00000000);
+	nvkm_done(chan->inst);
+}
+
+static const struct nvkm_engn_func
+gv11b_engn_ce = {
+	.chsw = gk104_engn_chsw,
+	.cxid = gk104_engn_cxid,
+	.bind = gv11b_ectx_ce_bind,
+};
+
+/*
+ * GV11B: the channel instance pointer (ccsr_channel_inst) needs its aperture
+ * (bits 29:28); gk104_chan_bind_inst leaves it 0 (VRAM), and the channel then
+ * never answers a preempt (10 s nvkm_runl_preempt_wait timeouts).
+ */
+/*
+ * GV11B: RAMFC's USERD address carries its aperture in bits 1:0
+ * (pbdma_userd_target_*); gv100 leaves 0 (VRAM). Use coherent sysmem.
+ */
+static int
+gv11b_chan_ramfc_write(struct nvkm_chan *chan, u64 offset, u64 length, u32 devm, bool priv)
+{
+	int ret = gv100_chan_ramfc_write(chan, offset, length, devm, priv);
+
+	if (ret)
+		return ret;
+
+	nvkm_kmap(chan->inst);
+	nvkm_mo32(chan->inst, 0x008, 0x00000003, 0x00000002);
+	nvkm_done(chan->inst);
+	return 0;
+}
+
+static const struct nvkm_chan_func_ramfc
+gv11b_chan_ramfc = {
+	.write = gv11b_chan_ramfc_write,
+	.devm = 0xfff,
+	.priv = true,
+};
+
+static void
+gv11b_chan_bind_inst(struct nvkm_chan *chan)
+{
+	struct nvkm_device *device = chan->cgrp->runl->fifo->engine.subdev.device;
+	u32 aper = 0;
+
+	/*
+	 * Tegra194 is IO-coherent and the DMA API gives nouveau cached memory
+	 * without cache maintenance, so the GPU must snoop: use the coherent
+	 * aperture. With non-coherent (3) the PBDMA read stale RAMFC
+	 * (PBDMA intr 0x01000000 storm).
+	 */
+	switch (nvkm_memory_target(chan->inst->memory)) {
+	case NVKM_MEM_TARGET_HOST:
+	case NVKM_MEM_TARGET_NCOH: aper = 0x20000000; break;
+	default:
+		break;
+	}
+
+	nvkm_wr32(device, 0x800000 + (chan->id * 8), 0x80000000 | aper | chan->inst->addr >> 12);
+}
+
+/* GV11B (Tegra194): no VRAM, so USERD is FIFO-owned in BAR1 as on GK104/GP10B. */
+static const struct nvkm_chan_func
+gv11b_chan = {
+	.inst = &gf100_chan_inst,
+	.userd = &gk104_chan_userd,
+	.ramfc = &gv11b_chan_ramfc,
+	.bind = gv11b_chan_bind_inst,
+	.unbind = gk104_chan_unbind,
+	.start = gk104_chan_start,
+	.stop = gk104_chan_stop,
+	.preempt = gk110_chan_preempt,
+	.doorbell_handle = gv100_chan_doorbell_handle,
+};
+
+/*
+ * nvgpu initialises GR (incl. its engine reset) at power-on, before any
+ * channel exists. nouveau inits GR lazily on the first GR object, after the
+ * DRM's kernel channel is already resident, and the reset then hits the
+ * loaded PBDMA (ENG_RESET, intr 0x01000000) and the golden save times out.
+ * Take a permanent GR reference here, before channels can be created.
+ */
+static void
+gv11b_fifo_init(struct nvkm_fifo *fifo)
+{
+	struct nvkm_device *device = fifo->engine.subdev.device;
+	static bool gr_ref;
+
+	if (!gr_ref && device->gr) {
+		struct nvkm_engine *gr = nvkm_engine_ref(&device->gr->engine);
+
+		if (IS_ERR(gr))
+			nvkm_error(&fifo->engine.subdev, "early GR init failed: %ld\n", PTR_ERR(gr));
+		else
+			gr_ref = true;
+	}
+
+	gk104_fifo_init(fifo);
+	nvkm_wr32(device, 0x002528, 0x80000000); /* channel non-stall -> intr tree 1 */
+}
+
+/*
+ * GV11B (as nvgpu does): channel non-stall interrupts (fences) are routed
+ * with FIFO intr_en_1 (0x2528) to MC leaf 1 (PFIFO bit 8), which Tegra
+ * raises on its own "nonstall" line. intr_en_0 bit 31, as used on dGPUs,
+ * never fired here.
+ */
+/*
+ * The routing bit is left on permanently (set in gv11b_fifo_init, as nvgpu
+ * does): a NON_STALL_INTERRUPT executed while 0x2528 bit 31 was clear is
+ * dropped, not latched, so enabling it lazily on the first wait lost the
+ * first fence's interrupt (30 s wait). Notifying with no listener is cheap.
+ */
+static void
+gv11b_fifo_nonstall_allow(struct nvkm_event *event, int type, int index)
+{
+}
+
+static void
+gv11b_fifo_nonstall_block(struct nvkm_event *event, int type, int index)
+{
+}
+
+static const struct nvkm_event_func
+gv11b_fifo_nonstall = {
+	.init = gv11b_fifo_nonstall_allow,
+	.fini = gv11b_fifo_nonstall_block,
+};
+
+static irqreturn_t
+gv11b_fifo_nonstall_intr(struct nvkm_inth *inth)
+{
+	struct nvkm_runl *runl = container_of(inth, typeof(*runl), nonstall.inth);
+	struct nvkm_fifo *fifo = runl->fifo;
+	struct nvkm_device *device = fifo->engine.subdev.device;
+
+	if (!(nvkm_rd32(device, 0x002100) & 0x80000000))
+		return IRQ_NONE;
+
+	nvkm_wr32(device, 0x002100, 0x80000000);
+	nvkm_event_ntfy(&fifo->nonstall.event, 0, NVKM_FIFO_NONSTALL_EVENT);
+	return IRQ_HANDLED;
+}
+
+static int
+gv11b_fifo_nonstall_ctor(struct nvkm_fifo *fifo)
+{
+	struct nvkm_runl *runl = list_first_entry(&fifo->runls, typeof(*runl), head);
+	int ret;
+
+	/* MC leaf 1 (non-stall), PFIFO bit 8. */
+	ret = nvkm_inth_add(&fifo->engine.subdev.device->mc->intr, 32 + 8,
+			    NVKM_INTR_PRIO_NORMAL, &fifo->engine.subdev,
+			    gv11b_fifo_nonstall_intr, &runl->nonstall.inth);
+	if (ret)
+		return ret;
+
+	nvkm_inth_allow(&runl->nonstall.inth);
+	return 1;
+}
+
+static const struct nvkm_fifo_func
+gv11b_fifo = {
+	.chid_nr = gm200_fifo_chid_nr,
+	.chid_ctor = gk110_fifo_chid_ctor,
+	.runq_nr = gm200_fifo_runq_nr,
+	.runl_ctor = gk104_fifo_runl_ctor,
+	.init = gv11b_fifo_init,
+	.init_pbdmas = gk104_fifo_init_pbdmas,
+	.intr = gk104_fifo_intr,
+	.intr_ctxsw_timeout = gv100_fifo_intr_ctxsw_timeout,
+	.mmu_fault = &gv100_fifo_mmu_fault,
+	.nonstall_ctor = gv11b_fifo_nonstall_ctor,
+	.nonstall = &gv11b_fifo_nonstall,
+	.runl = &gv100_runl,
+	.runq = &gv100_runq,
+	.engn = &gv100_engn,
+	.engn_ce = &gv11b_engn_ce,
+	.cgrp = {{ 0, 0, KEPLER_CHANNEL_GROUP_A  }, &gk110_cgrp, .force = true },
+	.chan = {{ 0, 0,  VOLTA_CHANNEL_GPFIFO_A }, &gv11b_chan },
+};
+
+int
+gv11b_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+	       struct nvkm_fifo **pfifo)
+{
+	return nvkm_fifo_new_(&gv11b_fifo, device, type, inst, pfifo);
 }

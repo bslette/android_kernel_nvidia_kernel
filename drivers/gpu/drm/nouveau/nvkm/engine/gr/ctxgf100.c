@@ -23,6 +23,7 @@
  */
 #include "ctxgf100.h"
 
+
 #include <subdev/fb.h>
 #include <subdev/mc.h>
 #include <subdev/timer.h>
@@ -1491,6 +1492,24 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 
 	/* Make channel current. */
 	addr = inst->addr >> 12;
+	/*
+	 * FECS instance pointers carry the aperture in bits 29:28. It was left
+	 * at 0 (VRAM), which GV11B (sysmem only) rejects with a FECS error; nvgpu
+	 * passes 3 (non-coherent sysmem) for this instance block.
+	 */
+	switch (nvkm_memory_target(inst->memory)) {
+	case NVKM_MEM_TARGET_HOST: addr |= 0x20000000; break;
+	case NVKM_MEM_TARGET_NCOH:
+		/*
+		 * nvgpu uses 3 (non-coherent) with uncached CPU mappings; on an
+		 * IO-coherent Tegra (GV11B) nouveau's instmem is cached, so FECS
+		 * must snoop.
+		 */
+		addr |= device->chipset == 0x15b ? 0x20000000 : 0x30000000;
+		break;
+	default:
+		break;
+	}
 	if (gr->firmware) {
 		ret = gf100_gr_fecs_bind_pointer(gr, 0x80000000 | addr);
 		if (ret)
@@ -1532,7 +1551,17 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 		if (ret)
 			goto done_inst;
 
-		nvkm_mask(device, 0x409b00, 0x80000000, 0x00000000);
+		/*
+		 * GV11B: clear the pointer too, as nvgpu does (0x409b00 = 0).
+		 * The golden instance block is freed next, and when a channel's
+		 * instance block reused that address FECS treated the stale
+		 * (invalid) current context as already loaded and never serviced
+		 * the channel's first context switch (its first fence hung).
+		 */
+		if (device->chipset == 0x15b)
+			nvkm_wr32(device, 0x409b00, 0x00000000);
+		else
+			nvkm_mask(device, 0x409b00, 0x80000000, 0x00000000);
 	}
 
 	gr->data = kmalloc(gr->size, GFP_KERNEL);

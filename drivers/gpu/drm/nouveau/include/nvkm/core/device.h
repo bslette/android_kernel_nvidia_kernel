@@ -68,6 +68,7 @@ struct nvkm_device {
 		struct list_head prio[NVKM_INTR_PRIO_NR];
 		spinlock_t lock;
 		int irq;
+		int irq_nonstall;
 		bool alloc;
 		bool armed;
 		bool legacy_done;
@@ -85,6 +86,8 @@ struct nvkm_device_func {
 	int (*init)(struct nvkm_device *);
 	void (*fini)(struct nvkm_device *, bool suspend);
 	int (*irq)(struct nvkm_device *);
+	/* Optional second line for non-stall interrupts (Tegra). */
+	int (*irq_nonstall)(struct nvkm_device *);
 	resource_size_t (*resource_addr)(struct nvkm_device *, unsigned bar);
 	resource_size_t (*resource_size)(struct nvkm_device *, unsigned bar);
 	bool cpu_coherent;
