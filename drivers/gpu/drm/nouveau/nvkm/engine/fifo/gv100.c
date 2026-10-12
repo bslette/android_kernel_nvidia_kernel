@@ -514,13 +514,40 @@ gv11b_engn_ce = {
 	.bind = gv11b_ectx_ce_bind,
 };
 
+/*
+ * GV11B: the channel instance pointer (ccsr_channel_inst) needs its aperture
+ * (bits 29:28); gk104_chan_bind_inst leaves it 0 (VRAM), and the channel then
+ * never answers a preempt (10 s nvkm_runl_preempt_wait timeouts).
+ */
+static void
+gv11b_chan_bind_inst(struct nvkm_chan *chan)
+{
+	struct nvkm_device *device = chan->cgrp->runl->fifo->engine.subdev.device;
+	u32 aper = 0;
+
+	/*
+	 * Tegra194 is IO-coherent and the DMA API gives nouveau cached memory
+	 * without cache maintenance, so the GPU must snoop: use the coherent
+	 * aperture. With non-coherent (3) the PBDMA read stale RAMFC
+	 * (PBDMA intr 0x01000000 storm).
+	 */
+	switch (nvkm_memory_target(chan->inst->memory)) {
+	case NVKM_MEM_TARGET_HOST:
+	case NVKM_MEM_TARGET_NCOH: aper = 0x20000000; break;
+	default:
+		break;
+	}
+
+	nvkm_wr32(device, 0x800000 + (chan->id * 8), 0x80000000 | aper | chan->inst->addr >> 12);
+}
+
 /* GV11B (Tegra194): no VRAM, so USERD is FIFO-owned in BAR1 as on GK104/GP10B. */
 static const struct nvkm_chan_func
 gv11b_chan = {
 	.inst = &gf100_chan_inst,
 	.userd = &gk104_chan_userd,
 	.ramfc = &gv100_chan_ramfc,
-	.bind = gk104_chan_bind_inst,
+	.bind = gv11b_chan_bind_inst,
 	.unbind = gk104_chan_unbind,
 	.start = gk104_chan_start,
 	.stop = gk104_chan_stop,
