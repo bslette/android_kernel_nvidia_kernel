@@ -57,7 +57,8 @@ gv100_fault_buffer_process(struct work_struct *work)
 		nvkm_wr32(device, buffer->get, get);
 
 		info.addr   = ((u64)addrhi << 32) | addrlo;
-		info.inst   = ((u64)insthi << 32) | instlo;
+		/* bits 9:8 of INST_LO are the aperture (non-zero for sysmem) */
+		info.inst   = ((u64)insthi << 32) | (instlo & 0xfffff000);
 		info.time   = ((u64)timehi << 32) | timelo;
 		info.engine = (info0 & 0x000000ff);
 		info.valid  = (info1 & 0x80000000) >> 31;
@@ -232,6 +233,85 @@ gv100_fault = {
 	 */
 	.user = { { 0, 0, VOLTA_FAULT_BUFFER_A }, 1 },
 };
+
+/*
+ * GV11B: log raw NISO/fault status, clear dropped-fault bits like nvgpu
+ * (gv11b_fb_handle_dropped_mmu_fault), and guard against an interrupt storm
+ * (a fault that keeps re-raising livelocked CPU0 in the first bring-up test).
+ */
+static void
+gv11b_fault_intr(struct nvkm_fault *fault)
+{
+	struct nvkm_subdev *subdev = &fault->subdev;
+	struct nvkm_device *device = subdev->device;
+	static unsigned long window;
+	static unsigned int count;
+	u32 stat = nvkm_rd32(device, 0x100a20);
+	u32 status = nvkm_rd32(device, 0x100e60);
+
+	if (time_after(jiffies, window + HZ)) {
+		window = jiffies;
+		count = 0;
+	}
+	if (++count > 1000) {
+		nvkm_error(subdev, "fault interrupt storm (niso %08x status %08x), masking\n",
+			   stat, status);
+		nvkm_wr32(device, 0x100a34, 0xffffffff);
+		return;
+	}
+
+	if (status & 0x000000ff) {	/* dropped_{bar1,bar2,ifb,other}_{phys,virt} */
+		nvkm_error(subdev, "dropped mmu fault %08x\n", status & 0xff);
+		nvkm_wr32(device, 0x100e60, status & 0xff);
+	}
+
+	/*
+	 * Non-replayable buffer notify stays asserted until the work item has
+	 * drained the buffer (GET == PUT); mask it until then instead of taking
+	 * the interrupt over and over (seen as >1000 IRQs per fault here).
+	 */
+	if ((stat & 0x20000000) && fault->buffer[0])
+		fault->func->buffer.intr(fault->buffer[0], false);
+
+	gv100_fault_intr(fault);
+}
+
+static void
+gv11b_fault_buffer_process(struct work_struct *work)
+{
+	struct nvkm_fault *fault = container_of(work, typeof(*fault), nrpfb_work);
+
+	gv100_fault_buffer_process(work);
+	fault->func->buffer.intr(fault->buffer[0], true);
+}
+
+static const struct nvkm_fault_func
+gv11b_fault = {
+	.oneinit = gv100_fault_oneinit,
+	.init = gv100_fault_init,
+	.fini = gv100_fault_fini,
+	.intr = gv11b_fault_intr,
+	.buffer.nr = 2,
+	.buffer.entry_size = 32,
+	.buffer.info = gv100_fault_buffer_info,
+	.buffer.pin = gp100_fault_buffer_pin,
+	.buffer.init = gv100_fault_buffer_init,
+	.buffer.fini = gv100_fault_buffer_fini,
+	.buffer.intr = gv100_fault_buffer_intr,
+	.user = { { 0, 0, VOLTA_FAULT_BUFFER_A }, 1 },
+};
+
+int
+gv11b_fault_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+		struct nvkm_fault **pfault)
+{
+	int ret = nvkm_fault_new_(&gv11b_fault, device, type, inst, pfault);
+	if (ret)
+		return ret;
+
+	INIT_WORK(&(*pfault)->nrpfb_work, gv11b_fault_buffer_process);
+	return 0;
+}
 
 int
 gv100_fault_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
