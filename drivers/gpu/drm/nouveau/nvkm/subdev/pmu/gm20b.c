@@ -140,7 +140,7 @@ gm20b_pmu_acr_init_wpr_callback(void *priv, struct nvfw_falcon_msg *hdr)
 	return 0;
 }
 
-static int
+int
 gm20b_pmu_acr_init_wpr(struct nvkm_pmu *pmu)
 {
 	struct nv_pmu_acr_init_wpr_region_cmd cmd = {
@@ -155,7 +155,7 @@ gm20b_pmu_acr_init_wpr(struct nvkm_pmu *pmu)
 				     gm20b_pmu_acr_init_wpr_callback, pmu, 0);
 }
 
-static int
+int
 gm20b_pmu_initmsg(struct nvkm_pmu *pmu)
 {
 	struct nv_pmu_init_msg msg;
@@ -181,7 +181,7 @@ gm20b_pmu_initmsg(struct nvkm_pmu *pmu)
 	return gm20b_pmu_acr_init_wpr(pmu);
 }
 
-static void
+void
 gm20b_pmu_recv(struct nvkm_pmu *pmu)
 {
 	if (!pmu->initmsg_received) {
@@ -197,7 +197,7 @@ gm20b_pmu_recv(struct nvkm_pmu *pmu)
 	nvkm_falcon_msgq_recv(pmu->msgq);
 }
 
-static void
+void
 gm20b_pmu_fini(struct nvkm_pmu *pmu)
 {
 	/*TODO: shutdown RTOS. */
@@ -211,7 +211,7 @@ gm20b_pmu_fini(struct nvkm_pmu *pmu)
 	nvkm_falcon_put(&pmu->falcon, &pmu->subdev);
 }
 
-static int
+int
 gm20b_pmu_init(struct nvkm_pmu *pmu)
 {
 	struct nvkm_falcon *falcon = &pmu->falcon;

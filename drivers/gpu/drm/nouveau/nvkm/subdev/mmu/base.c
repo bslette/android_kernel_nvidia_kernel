@@ -304,8 +304,17 @@ nvkm_mmu_host(struct nvkm_mmu *mmu)
 	 * done through BAR1.
 	 */
 	type |= NVKM_MEM_COHERENT;
-	if (device->func->cpu_coherent)
-		nvkm_mmu_type(mmu, heap, type & ~NVKM_MEM_KIND);
+	if (device->func->cpu_coherent) {
+		/*
+		 * On Tegra the CPU maps system memory directly, never through
+		 * BAR1, so block-linear kinds are fine here (IO-coherent
+		 * Tegra194: render targets need them).
+		 */
+		if (device->func->tegra)
+			nvkm_mmu_type(mmu, heap, type);
+		else
+			nvkm_mmu_type(mmu, heap, type & ~NVKM_MEM_KIND);
+	}
 
 	/* Uncached system memory. */
 	nvkm_mmu_type(mmu, heap, type |= NVKM_MEM_UNCACHED);

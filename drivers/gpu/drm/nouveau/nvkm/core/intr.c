@@ -359,6 +359,19 @@ nvkm_intr_install(struct nvkm_device *device)
 	if (ret)
 		return ret;
 
+	/*
+	 * Tegra raises non-stall interrupts (fence/semaphore completion) on a
+	 * separate line. nvkm_intr() scans every leaf, so share the handler.
+	 */
+	device->intr.irq_nonstall = -1;
+	if (device->func->irq_nonstall) {
+		int irq = device->func->irq_nonstall(device);
+
+		if (irq > 0 && irq != device->intr.irq &&
+		    !request_irq(irq, nvkm_intr, IRQF_SHARED, "nvkm-nonstall", device))
+			device->intr.irq_nonstall = irq;
+	}
+
 	device->intr.alloc = true;
 	return 0;
 }
@@ -374,8 +387,11 @@ nvkm_intr_dtor(struct nvkm_device *device)
 		kfree(intr->stat);
 	}
 
-	if (device->intr.alloc)
+	if (device->intr.alloc) {
+		if (device->intr.irq_nonstall > 0)
+			free_irq(device->intr.irq_nonstall, device);
 		free_irq(device->intr.irq, device);
+	}
 }
 
 void
