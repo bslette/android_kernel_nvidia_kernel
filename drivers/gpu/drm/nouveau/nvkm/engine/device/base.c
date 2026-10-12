@@ -2320,6 +2320,12 @@ nv15b_chipset = {
 	.privring = { 0x00000001, gp10b_privring_new },
 	.timer    = { 0x00000001, gk20a_timer_new },
 	.top      = { 0x00000001, gk104_top_new },
+	.vfn      = { 0x00000001, gv100_vfn_new },
+	.ce       = { 0x00000007, gv100_ce_new },
+	.dma      = { 0x00000001, gv100_dma_new },
+	.fifo     = { 0x00000001, gv11b_fifo_new },
+	.gr       = { 0x00000001, gv11b_gr_new },
+	.sw       = { 0x00000001, gf100_sw_new },
 };
 
 static const struct nvkm_device_chip
