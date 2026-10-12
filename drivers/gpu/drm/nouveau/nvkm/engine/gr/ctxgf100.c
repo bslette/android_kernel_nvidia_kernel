@@ -1571,22 +1571,6 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 			gr->data[i / 4] = nvkm_ro32(data, CB_RESERVED + i);
 		nvkm_done(data);
 
-		/*
-		 * GV11B: the golden image carries the context's preemption
-		 * modes (ctxsw_prog main image: graphics options 0x80, compute
-		 * options 0x84; 0 = WFI). nvgpu writes its defaults (WFI/WFI)
-		 * into every new context; nouveau never set them.
-		 */
-		if (device->chipset == 0x15b) {
-			static const u16 off[] = { 0x0c, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x28, 0x2c, 0x3c, 0x78, 0x7c,
-						   0x80, 0x84, 0xa0, 0xa4, 0xa8, 0xd0, 0xd4, 0xd8, 0xdc, 0xf0, 0xf4, 0xf8, 0xfc };
-			int k;
-			for (k = 0; k < ARRAY_SIZE(off); k += 6)
-				nvkm_warn(subdev, "XXX golden hdr %02x:%08x %02x:%08x %02x:%08x %02x:%08x %02x:%08x %02x:%08x\n",
-					  off[k], gr->data[off[k] / 4], off[k + 1], gr->data[off[k + 1] / 4],
-					  off[k + 2], gr->data[off[k + 2] / 4], off[k + 3], gr->data[off[k + 3] / 4],
-					  off[k + 4], gr->data[off[k + 4] / 4], off[k + 5], gr->data[off[k + 5] / 4]);
-		}
 		ret = 0;
 	} else {
 		ret = -ENOMEM;
