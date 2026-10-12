@@ -2050,8 +2050,9 @@ static irqreturn_t tegra194_cbb_err_isr(int irq, void *data)
 	spin_unlock_irqrestore(&cbb_lock, flags);
 
 	if (is_inband_err) {
+		/* XXX nouveau GV11B bring-up kernel: survive GPU bus errors. */
 		if (is_fatal)
-			BUG();
+			WARN(true, "Fatal CBB error (BUG() disabled for bring-up)\n");
 		else
 			WARN(true, "Warning due to CBB Error\n");
 	}
