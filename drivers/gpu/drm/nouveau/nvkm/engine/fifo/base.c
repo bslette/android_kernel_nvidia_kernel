@@ -319,6 +319,14 @@ nvkm_fifo_oneinit(struct nvkm_engine *engine)
 		ret = nvkm_memory_map(fifo->userd.mem, 0, bar1, fifo->userd.bar1, NULL, 0);
 		if (ret)
 			return ret;
+
+		/*
+		 * GV11B: CPU writes to USERD through BAR1 reached the PBDMA one
+		 * doorbell late (GP_PUT stale). Hand out a direct mapping of the
+		 * (coherent) instmem instead; it stays acquired until dtor.
+		 */
+		if (device->chipset == 0x15b)
+			fifo->userd.cpu = (void __force *)nvkm_kmap(fifo->userd.mem);
 	}
 
 	return 0;
@@ -339,6 +347,8 @@ nvkm_fifo_dtor(struct nvkm_engine *engine)
 
 	if (fifo->userd.bar1)
 		nvkm_vmm_put(nvkm_bar_bar1_vmm(engine->subdev.device), &fifo->userd.bar1);
+	if (fifo->userd.cpu)
+		nvkm_done(fifo->userd.mem);
 	nvkm_memory_unref(&fifo->userd.mem);
 
 	list_for_each_entry_safe(runl, runt, &fifo->runls, head)

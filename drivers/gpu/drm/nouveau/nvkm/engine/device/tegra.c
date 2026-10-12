@@ -20,6 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 #include <core/tegra.h>
+#include <linux/dma-map-ops.h>
 #ifdef CONFIG_NOUVEAU_PLATFORM_DRIVER
 #include "priv.h"
 
@@ -221,6 +222,14 @@ nvkm_device_tegra_irq(struct nvkm_device *device)
 	return platform_get_irq_byname(tdev->pdev, "stall");
 }
 
+static int
+nvkm_device_tegra_irq_nonstall(struct nvkm_device *device)
+{
+	struct nvkm_device_tegra *tdev = nvkm_device_tegra(device);
+
+	return platform_get_irq_byname_optional(tdev->pdev, "nonstall");
+}
+
 static void *
 nvkm_device_tegra_dtor(struct nvkm_device *device)
 {
@@ -235,9 +244,28 @@ nvkm_device_tegra_func = {
 	.tegra = nvkm_device_tegra,
 	.dtor = nvkm_device_tegra_dtor,
 	.irq = nvkm_device_tegra_irq,
+	.irq_nonstall = nvkm_device_tegra_irq_nonstall,
 	.resource_addr = nvkm_device_tegra_resource_addr,
 	.resource_size = nvkm_device_tegra_resource_size,
 	.cpu_coherent = false,
+};
+
+/*
+ * IO-coherent Tegra (Tegra194 GV11B, "dma-coherent" in DT): the GPU snoops
+ * CPU caches (aperture 2), so use cached CPU mappings. With uncached ones
+ * the snoop could return stale dirty lines from the kernel's cacheable
+ * linear-map alias (fresh pushbuffer ring read back as zeroes: PBDMA
+ * SEMAPHORE error, first fence never signalled).
+ */
+static const struct nvkm_device_func
+nvkm_device_tegra_coherent_func = {
+	.tegra = nvkm_device_tegra,
+	.dtor = nvkm_device_tegra_dtor,
+	.irq = nvkm_device_tegra_irq,
+	.irq_nonstall = nvkm_device_tegra_irq_nonstall,
+	.resource_addr = nvkm_device_tegra_resource_addr,
+	.resource_size = nvkm_device_tegra_resource_size,
+	.cpu_coherent = true,
 };
 
 int
@@ -327,7 +355,7 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 
 	tdev->gpu_speedo = tegra_sku_info.gpu_speedo_value;
 	tdev->gpu_speedo_id = tegra_sku_info.gpu_speedo_id;
-	ret = nvkm_device_ctor(&nvkm_device_tegra_func, NULL, &pdev->dev,
+	ret = nvkm_device_ctor((dev_is_dma_coherent(&pdev->dev) ? &nvkm_device_tegra_coherent_func : &nvkm_device_tegra_func), NULL, &pdev->dev,
 			       NVKM_DEVICE_TEGRA, pdev->id, NULL,
 			       cfg, dbg, &tdev->device);
 	if (ret)
