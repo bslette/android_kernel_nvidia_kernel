@@ -349,6 +349,18 @@ gv100_gr_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst, s
  * GV11B (Tegra194): GV100 graphics with firmware from NVIDIA's netlist
  * (NET_img.bin, as nvgpu uses it) and LS FECS/GPCCS bootstrapped by the PMU.
  */
+/*
+ * GV11B: only the GPC MMU LTC count (gr_gpcs_mmu_num_active_ltcs, as nvgpu);
+ * 0x100804 / GPC_BCAST(0x033c) do not exist here (PRIVRING read fault).
+ */
+static void
+gv11b_gr_init_num_active_ltcs(struct gf100_gr *gr)
+{
+	struct nvkm_device *device = gr->base.engine.subdev.device;
+
+	nvkm_wr32(device, GPC_BCAST(0x08ac), nvkm_rd32(device, 0x100800));
+}
+
 static const struct gf100_gr_func
 gv11b_gr = {
 	.oneinit_tiles = gm200_gr_oneinit_tiles,
@@ -358,7 +370,7 @@ gv11b_gr = {
 	.init_gpc_mmu = gm200_gr_init_gpc_mmu,
 	.init_vsc_stream_master = gk104_gr_init_vsc_stream_master,
 	.init_zcull = gf117_gr_init_zcull,
-	.init_num_active_ltcs = gm200_gr_init_num_active_ltcs,
+	.init_num_active_ltcs = gv11b_gr_init_num_active_ltcs,
 	.init_rop_active_fbps = gp100_gr_init_rop_active_fbps,
 	.init_swdx_pes_mask = gp102_gr_init_swdx_pes_mask,
 	.init_fecs_exceptions = gp100_gr_init_fecs_exceptions,
@@ -375,7 +387,7 @@ gv11b_gr = {
 	.rops = gm200_gr_rops,
 	.gpc_nr = 6,
 	.tpc_nr = 7,
-	.ppc_nr = 3,
+	.ppc_nr = 2,	/* nvgpu litter num_pes_per_gpc; gv100's 3 probed a phantom PPC */
 	.grctx = &gv100_grctx,
 	.zbc = &gp102_gr_zbc,
 	.sclass = {
