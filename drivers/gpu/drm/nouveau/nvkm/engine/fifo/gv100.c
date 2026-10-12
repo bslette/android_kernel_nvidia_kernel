@@ -194,10 +194,14 @@ gv100_runl_insert_chan(struct nvkm_chan *chan, struct nvkm_memory *memory, u64 o
 	nvkm_wo32(memory, offset + 0xc, upper_32_bits(inst));
 }
 
+/* XXX bring-up: TSG timeslice = 128 << scale us (default 3 = 1 ms, as nvgpu) */
+static int gv100_tslice_scale = 3;
+module_param_named(tslice_scale, gv100_tslice_scale, int, 0644);
+
 void
 gv100_runl_insert_cgrp(struct nvkm_cgrp *cgrp, struct nvkm_memory *memory, u64 offset)
 {
-	nvkm_wo32(memory, offset + 0x0, (128 << 24) | (3 << 16) | 0x00000001);
+	nvkm_wo32(memory, offset + 0x0, (128 << 24) | ((gv100_tslice_scale & 0xf) << 16) | 0x00000001);
 	nvkm_wo32(memory, offset + 0x4, cgrp->chan_nr);
 	nvkm_wo32(memory, offset + 0x8, cgrp->id);
 	nvkm_wo32(memory, offset + 0xc, 0x00000000);
