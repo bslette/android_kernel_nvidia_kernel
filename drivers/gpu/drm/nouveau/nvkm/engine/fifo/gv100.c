@@ -494,28 +494,6 @@ gv100_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	return nvkm_fifo_new_(&gv100_fifo, device, type, inst, pfifo);
 }
 
-/*
- * GV11B: Tegra instmem has no BAR2 mappings yet, so the CE method buffer
- * pointer (ram_in_eng_method_buffer_addr, inst+0x220) is left at 0. It is
- * only used to save CE methods on a fault.
- * XXX implement BAR2 for Tegra instmem and point this at a real buffer.
- */
-static void
-gv11b_ectx_ce_bind(struct nvkm_engn *engn, struct nvkm_cctx *cctx, struct nvkm_chan *chan)
-{
-	nvkm_kmap(chan->inst);
-	nvkm_wo32(chan->inst, 0x220, 0x00000000);
-	nvkm_wo32(chan->inst, 0x224, 0x00000000);
-	nvkm_mo32(chan->inst, 0x0ac, 0x00020000, cctx ? 0x00020000 : 0x00000000);
-	nvkm_done(chan->inst);
-}
-
-static const struct nvkm_engn_func
-gv11b_engn_ce = {
-	.chsw = gk104_engn_chsw,
-	.cxid = gk104_engn_cxid,
-	.bind = gv11b_ectx_ce_bind,
-};
 
 /*
  * GV11B: the channel instance pointer (ccsr_channel_inst) needs its aperture
@@ -669,6 +647,72 @@ gv11b_fifo_nonstall_ctor(struct nvkm_fifo *fifo)
 	return 1;
 }
 
+/*
+ * GV11B: FIFO ctxsw timeout (intr bit 1). Same registers as Turing
+ * (0x2a30 engine mask, 0x3200 + 4*engn info, nvgpu fifo_intr_ctxsw_timeout*),
+ * which gk104_fifo_intr does not handle: it masked the interrupt and left
+ * 0x2a30 latched, and the GPU stopped scheduling (Lineage boot, and three
+ * concurrent long-draw GL contexts on Ubuntu).
+ */
+static void
+gv11b_fifo_intr_ctxsw_timeout(struct nvkm_fifo *fifo)
+{
+	struct nvkm_subdev *subdev = &fifo->engine.subdev;
+	struct nvkm_device *device = subdev->device;
+	struct nvkm_runl *runl;
+	struct nvkm_engn *engn;
+	u32 engm = nvkm_rd32(device, 0x002a30);
+
+	nvkm_runl_foreach(runl, fifo) {
+		nvkm_runl_foreach_engn_cond(engn, runl, engm & BIT(engn->id)) {
+			u32 info = nvkm_rd32(device, 0x003200 + (engn->id * 4));
+			static const char *const state[] = { "?", "load", "save", "switch" };
+			static const char *const status[] = { "awaiting ack", "eng was reset",
+							      "ack received", "dropped timeout" };
+			struct nvkm_cgrp *cgrp = NULL;
+			unsigned long flags;
+			int id = -1;
+
+			switch (info & 0x0000c000) {
+			case 0x00004000: id = (info >> 16) & 0x3fff; break;	/* LOAD: next */
+			case 0x00008000:					/* SAVE */
+			case 0x0000c000: id = info & 0x3fff; break;		/* SWITCH: prev */
+			default: break;
+			}
+
+			nvkm_warn(subdev, "ctxsw timeout engn %d: %s, prev tsg %d next tsg %d, %s\n",
+				  engn->id, state[(info >> 14) & 3], info & 0x3fff,
+				  (info >> 16) & 0x3fff, status[info >> 30]);
+
+			/* ACK_RECEIVED/DROPPED_TIMEOUT: the switch completed, nothing stuck. */
+			if (info & 0xc0000000 || id < 0)
+				continue;
+
+			cgrp = nvkm_runl_cgrp_get_cgid(runl, id, &flags);
+			if (!WARN_ON(!cgrp)) {
+				nvkm_runl_rc_cgrp(cgrp);
+				nvkm_cgrp_put(&cgrp, flags);
+			}
+		}
+	}
+
+	nvkm_wr32(device, 0x002a30, engm);
+}
+
+static irqreturn_t
+gv11b_fifo_intr(struct nvkm_inth *inth)
+{
+	struct nvkm_fifo *fifo = container_of(inth, typeof(*fifo), engine.subdev.inth);
+	struct nvkm_device *device = fifo->engine.subdev.device;
+
+	if (nvkm_rd32(device, 0x002100) & nvkm_rd32(device, 0x002140) & 0x00000002) {
+		gv11b_fifo_intr_ctxsw_timeout(fifo);
+		nvkm_wr32(device, 0x002100, 0x00000002);
+	}
+
+	return gk104_fifo_intr(inth);
+}
+
 static const struct nvkm_fifo_func
 gv11b_fifo = {
 	.chid_nr = gm200_fifo_chid_nr,
@@ -677,7 +721,7 @@ gv11b_fifo = {
 	.runl_ctor = gk104_fifo_runl_ctor,
 	.init = gv11b_fifo_init,
 	.init_pbdmas = gk104_fifo_init_pbdmas,
-	.intr = gk104_fifo_intr,
+	.intr = gv11b_fifo_intr,
 	.intr_ctxsw_timeout = gv100_fifo_intr_ctxsw_timeout,
 	.mmu_fault = &gv100_fifo_mmu_fault,
 	.nonstall_ctor = gv11b_fifo_nonstall_ctor,
@@ -685,7 +729,7 @@ gv11b_fifo = {
 	.runl = &gv100_runl,
 	.runq = &gv100_runq,
 	.engn = &gv100_engn,
-	.engn_ce = &gv11b_engn_ce,
+	.engn_ce = &gv100_engn_ce,
 	.cgrp = {{ 0, 0, KEPLER_CHANNEL_GROUP_A  }, &gk110_cgrp, .force = true },
 	.chan = {{ 0, 0,  VOLTA_CHANNEL_GPFIFO_A }, &gv11b_chan },
 };

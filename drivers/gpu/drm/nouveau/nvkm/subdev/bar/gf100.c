@@ -94,6 +94,9 @@ gf100_bar_oneinit_bar(struct gf100_bar *bar, struct gf100_barN *bar_vm,
 		return ret;
 
 	bar_len = device->func->resource_size(device, bar_nr);
+	/* Tegra (GV11B): no BAR2 window; BAR2 is only used GPU-side. */
+	if (!bar_len && bar_nr == 3 && device->func->tegra)
+		bar_len = 32 << 20;
 	if (!bar_len)
 		return -ENOMEM;
 	if (bar_nr == 3 && bar->bar2_halve)
@@ -110,7 +113,8 @@ gf100_bar_oneinit_bar(struct gf100_bar *bar, struct gf100_barN *bar_vm,
 	/*
 	 * Bootstrap page table lookup.
 	 */
-	if (bar_nr == 3) {
+	/* Tegra: the CPU accesses instmem directly, not through BAR2. */
+	if (bar_nr == 3 && !device->func->tegra) {
 		ret = nvkm_vmm_boot(bar_vm->vmm);
 		if (ret)
 			return ret;

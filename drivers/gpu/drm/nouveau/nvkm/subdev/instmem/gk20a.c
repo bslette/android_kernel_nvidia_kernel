@@ -45,6 +45,7 @@
 
 #include <core/memory.h>
 #include <core/tegra.h>
+#include <subdev/bar.h>
 #include <subdev/ltc.h>
 #include <subdev/mmu.h>
 
@@ -55,6 +56,9 @@ struct gk20a_instobj {
 
 	/* CPU mapping */
 	u32 *vaddr;
+
+	/* BAR2 mapping (GPU-internal, e.g. Volta CE method buffers), on demand */
+	struct nvkm_vma *bar2;
 };
 #define gk20a_instobj(p) container_of((p), struct gk20a_instobj, base.memory)
 
@@ -290,6 +294,47 @@ gk20a_instobj_map(struct nvkm_memory *memory, u64 offset, struct nvkm_vmm *vmm,
 
 	return nvkm_vmm_map(vmm, vma, argv, argc, &map);
 }
+/*
+ * Map the object into the GPU's BAR2 address space on first use. Volta+ needs
+ * BAR2 addresses for e.g. CE method buffers; Tegra has no BAR2 CPU window, so
+ * this is a GPU-only mapping (gv11b_bar).
+ */
+/* separate from imem->lock: mapping may acquire page-table instobjs */
+static DEFINE_MUTEX(gk20a_instobj_bar2_lock);
+
+static u64
+gk20a_instobj_bar2(struct nvkm_memory *memory)
+{
+	struct gk20a_instobj *node = gk20a_instobj(memory);
+	struct nvkm_device *device = node->imem->base.subdev.device;
+	struct nvkm_vmm *vmm = nvkm_bar_bar2_vmm(device);
+	u64 addr = ~0ULL;
+
+	if (!vmm)
+		return addr;
+
+	mutex_lock(&gk20a_instobj_bar2_lock);
+	if (!node->bar2) {
+		if (!nvkm_vmm_get(vmm, 12, nvkm_memory_size(memory), &node->bar2) &&
+		    nvkm_memory_map(memory, 0, vmm, node->bar2, NULL, 0)) {
+			nvkm_vmm_put(vmm, &node->bar2);
+		}
+	}
+	if (node->bar2)
+		addr = node->bar2->addr;
+	mutex_unlock(&gk20a_instobj_bar2_lock);
+	return addr;
+}
+
+static void
+gk20a_instobj_bar2_put(struct gk20a_instobj *node)
+{
+	struct nvkm_vmm *vmm = nvkm_bar_bar2_vmm(node->imem->base.subdev.device);
+
+	if (node->bar2 && vmm)
+		nvkm_vmm_put(vmm, &node->bar2);
+}
+
 
 static void *
 gk20a_instobj_dtor_dma(struct nvkm_memory *memory)
@@ -297,6 +342,8 @@ gk20a_instobj_dtor_dma(struct nvkm_memory *memory)
 	struct gk20a_instobj_dma *node = gk20a_instobj_dma(memory);
 	struct gk20a_instmem *imem = node->base.imem;
 	struct device *dev = imem->base.subdev.device->dev;
+
+	gk20a_instobj_bar2_put(&node->base);
 
 	if (unlikely(!node->base.vaddr))
 		goto out;
@@ -316,6 +363,8 @@ gk20a_instobj_dtor_iommu(struct nvkm_memory *memory)
 	struct device *dev = imem->base.subdev.device->dev;
 	struct nvkm_mm_node *r = node->base.mn;
 	int i;
+
+	gk20a_instobj_bar2_put(&node->base);
 
 	if (unlikely(!r))
 		goto out;
@@ -359,6 +408,7 @@ gk20a_instobj_func_dma = {
 	.acquire = gk20a_instobj_acquire_dma,
 	.release = gk20a_instobj_release_dma,
 	.map = gk20a_instobj_map,
+	.bar2 = gk20a_instobj_bar2,
 };
 
 static const struct nvkm_memory_func
@@ -371,6 +421,7 @@ gk20a_instobj_func_iommu = {
 	.acquire = gk20a_instobj_acquire_iommu,
 	.release = gk20a_instobj_release_iommu,
 	.map = gk20a_instobj_map,
+	.bar2 = gk20a_instobj_bar2,
 };
 
 static const struct nvkm_memory_ptrs
