@@ -27,6 +27,7 @@
 #include "runq.h"
 
 #include <engine/gr.h>
+#include <subdev/mc.h>
 
 #include <core/gpuobj.h>
 #include <subdev/mmu.h>
@@ -605,6 +606,67 @@ gv11b_fifo_init(struct nvkm_fifo *fifo)
 	}
 
 	gk104_fifo_init(fifo);
+	nvkm_wr32(device, 0x002528, 0x80000000); /* channel non-stall -> intr tree 1 */
+}
+
+/*
+ * GV11B (as nvgpu does): channel non-stall interrupts (fences) are routed
+ * with FIFO intr_en_1 (0x2528) to MC leaf 1 (PFIFO bit 8), which Tegra
+ * raises on its own "nonstall" line. intr_en_0 bit 31, as used on dGPUs,
+ * never fired here.
+ */
+/*
+ * The routing bit is left on permanently (set in gv11b_fifo_init, as nvgpu
+ * does): a NON_STALL_INTERRUPT executed while 0x2528 bit 31 was clear is
+ * dropped, not latched, so enabling it lazily on the first wait lost the
+ * first fence's interrupt (30 s wait). Notifying with no listener is cheap.
+ */
+static void
+gv11b_fifo_nonstall_allow(struct nvkm_event *event, int type, int index)
+{
+}
+
+static void
+gv11b_fifo_nonstall_block(struct nvkm_event *event, int type, int index)
+{
+}
+
+static const struct nvkm_event_func
+gv11b_fifo_nonstall = {
+	.init = gv11b_fifo_nonstall_allow,
+	.fini = gv11b_fifo_nonstall_block,
+};
+
+static irqreturn_t
+gv11b_fifo_nonstall_intr(struct nvkm_inth *inth)
+{
+	struct nvkm_runl *runl = container_of(inth, typeof(*runl), nonstall.inth);
+	struct nvkm_fifo *fifo = runl->fifo;
+	struct nvkm_device *device = fifo->engine.subdev.device;
+
+	if (!(nvkm_rd32(device, 0x002100) & 0x80000000))
+		return IRQ_NONE;
+
+	nvkm_wr32(device, 0x002100, 0x80000000);
+	nvkm_event_ntfy(&fifo->nonstall.event, 0, NVKM_FIFO_NONSTALL_EVENT);
+	return IRQ_HANDLED;
+}
+
+static int
+gv11b_fifo_nonstall_ctor(struct nvkm_fifo *fifo)
+{
+	struct nvkm_runl *runl = list_first_entry(&fifo->runls, typeof(*runl), head);
+	int ret;
+
+	/* MC leaf 1 (non-stall), PFIFO bit 8. */
+	ret = nvkm_inth_add(&fifo->engine.subdev.device->mc->intr, 32 + 8,
+			    NVKM_INTR_PRIO_NORMAL, &fifo->engine.subdev,
+			    gv11b_fifo_nonstall_intr, &runl->nonstall.inth);
+	if (ret)
+		return ret;
+
+	nvkm_inth_allow(&runl->nonstall.inth);
+	return 1;
 }
 
 static const struct nvkm_fifo_func
@@ -618,7 +680,8 @@ gv11b_fifo = {
 	.intr = gk104_fifo_intr,
 	.intr_ctxsw_timeout = gv100_fifo_intr_ctxsw_timeout,
 	.mmu_fault = &gv100_fifo_mmu_fault,
-	.nonstall = &gf100_fifo_nonstall,
+	.nonstall_ctor = gv11b_fifo_nonstall_ctor,
+	.nonstall = &gv11b_fifo_nonstall,
 	.runl = &gv100_runl,
 	.runq = &gv100_runq,
 	.engn = &gv100_engn,

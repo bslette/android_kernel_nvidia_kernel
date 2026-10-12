@@ -1561,7 +1561,17 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 		if (ret)
 			goto done_inst;
 
-		nvkm_mask(device, 0x409b00, 0x80000000, 0x00000000);
+		/*
+		 * GV11B: clear the pointer too, as nvgpu does (0x409b00 = 0).
+		 * The golden instance block is freed next, and when a channel's
+		 * instance block reused that address FECS treated the stale
+		 * (invalid) current context as already loaded and never serviced
+		 * the channel's first context switch (its first fence hung).
+		 */
+		if (device->chipset == 0x15b)
+			nvkm_wr32(device, 0x409b00, 0x00000000);
+		else
+			nvkm_mask(device, 0x409b00, 0x80000000, 0x00000000);
 	}
 
 	gr->data = kmalloc(gr->size, GFP_KERNEL);

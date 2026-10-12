@@ -261,6 +261,13 @@ nvkm_uchan_map(struct nvkm_object *object, void *argv, u32 argc,
 	if (chan->func->userd->bar < 0)
 		return -ENOSYS;
 
+	if (chan->cgrp->runl->fifo->userd.cpu) {
+		*type = NVKM_OBJECT_MAP_VA;
+		*addr = (unsigned long)chan->cgrp->runl->fifo->userd.cpu + chan->userd.base;
+		*size = chan->func->userd->size;
+		return 0;
+	}
+
 	*type = NVKM_OBJECT_MAP_IO;
 	*addr = device->func->resource_addr(device, chan->func->userd->bar) +
 		chan->func->userd->base + chan->userd.base;

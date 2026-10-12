@@ -2311,7 +2311,7 @@ static const struct nvkm_device_chip
 nv15b_chipset = {
 	.name = "GV11B",
 	.acr      = { 0x00000001, gv11b_acr_new },
-	.bar      = { 0x00000001, gm20b_bar_new },
+	.bar      = { 0x00000001, gv11b_bar_new },
 	.bus      = { 0x00000001, gf100_bus_new },
 	.fb       = { 0x00000001, gv11b_fb_new },
 	.fuse     = { 0x00000001, gm107_fuse_new },
