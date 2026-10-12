@@ -2310,6 +2310,7 @@ nv15b_chipset = {
 	.acr      = { 0x00000001, gv11b_acr_new },
 	.bar      = { 0x00000001, gv11b_bar_new },
 	.bus      = { 0x00000001, gf100_bus_new },
+	.fault    = { 0x00000001, gv11b_fault_new },
 	.fb       = { 0x00000001, gv11b_fb_new },
 	.fuse     = { 0x00000001, gm107_fuse_new },
 	.imem     = { 0x00000001, gk20a_instmem_new },
