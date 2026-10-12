@@ -26,6 +26,9 @@
 
 #include <core/option.h>
 
+int nvkm_regtrace;
+module_param_named(regtrace, nvkm_regtrace, int, 0644);
+
 #include <subdev/bios.h>
 #include <subdev/therm.h>
 

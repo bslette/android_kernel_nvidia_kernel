@@ -113,10 +113,25 @@ struct nvkm_device *nvkm_device_find(u64 name);
 /* privileged register interface accessor macros */
 #define nvkm_rd08(d,a) ioread8((d)->pri + (a))
 #define nvkm_rd16(d,a) ioread16_native((d)->pri + (a))
-#define nvkm_rd32(d,a) ioread32_native((d)->pri + (a))
+/* XXX bring-up: register access trace to ftrace (nouveau.regtrace=1 writes, 2 +reads) */
+extern int nvkm_regtrace;
+static inline u32 nvkm_rd32_(void __iomem *pri, u32 a)
+{
+	u32 v = ioread32_native(pri + a);
+	if (unlikely(nvkm_regtrace > 1))
+		trace_printk("R %06x %08x\n", a, v);
+	return v;
+}
+static inline void nvkm_wr32_(void __iomem *pri, u32 a, u32 v)
+{
+	if (unlikely(nvkm_regtrace > 0))
+		trace_printk("W %06x %08x\n", a, v);
+	iowrite32_native(v, pri + a);
+}
+#define nvkm_rd32(d,a) nvkm_rd32_((d)->pri, (a))
 #define nvkm_wr08(d,a,v) iowrite8((v), (d)->pri + (a))
 #define nvkm_wr16(d,a,v) iowrite16_native((v), (d)->pri + (a))
-#define nvkm_wr32(d,a,v) iowrite32_native((v), (d)->pri + (a))
+#define nvkm_wr32(d,a,v) nvkm_wr32_((d)->pri, (a), (v))
 #define nvkm_mask(d,a,m,v) ({                                                  \
 	struct nvkm_device *_device = (d);                                     \
 	u32 _addr = (a), _temp = nvkm_rd32(_device, _addr);                    \

@@ -23,6 +23,9 @@
  */
 #include "ctxgf100.h"
 
+bool nvkm_gr_nogolden;
+module_param_named(nogolden, nvkm_gr_nogolden, bool, 0644);
+
 #include <subdev/fb.h>
 #include <subdev/mc.h>
 #include <subdev/timer.h>
@@ -1435,6 +1438,12 @@ gf100_grctx_generate_main(struct gf100_gr_chan *chan)
 int
 gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvkm_gpuobj *inst)
 {
+	extern bool nvkm_gr_nogolden;
+
+	if (nvkm_gr_nogolden) {	/* XXX bring-up: stop before golden context */
+		nvkm_warn(&gr->base.engine.subdev, "XXX nogolden: skipping grctx generation\n");
+		return -ENODEV;
+	}
 	const struct gf100_grctx_func *grctx = gr->func->grctx;
 	struct nvkm_subdev *subdev = &gr->base.engine.subdev;
 	struct nvkm_device *device = subdev->device;
@@ -1491,6 +1500,17 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 
 	/* Make channel current. */
 	addr = inst->addr >> 12;
+	/*
+	 * FECS instance pointers carry the aperture in bits 29:28. It was left
+	 * at 0 (VRAM), which GV11B (sysmem only) rejects with a FECS error; nvgpu
+	 * passes 3 (non-coherent sysmem) for this instance block.
+	 */
+	switch (nvkm_memory_target(inst->memory)) {
+	case NVKM_MEM_TARGET_HOST: addr |= 0x20000000; break;
+	case NVKM_MEM_TARGET_NCOH: addr |= 0x30000000; break;
+	default:
+		break;
+	}
 	if (gr->firmware) {
 		ret = gf100_gr_fecs_bind_pointer(gr, 0x80000000 | addr);
 		if (ret)
