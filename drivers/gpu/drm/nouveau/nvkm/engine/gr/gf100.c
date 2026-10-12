@@ -316,9 +316,6 @@ gf100_gr_object_get(struct nvkm_gr *base, int index, struct nvkm_sclass *sclass)
  * PGRAPH context
  ******************************************************************************/
 
-static int gf100_gr_xpatch = 1;
-module_param_named(xpatch, gf100_gr_xpatch, int, 0644);
-
 static int
 gf100_gr_chan_bind(struct nvkm_object *object, struct nvkm_gpuobj *parent,
 		   int align, struct nvkm_gpuobj **pgpuobj)
@@ -342,8 +339,7 @@ gf100_gr_chan_bind(struct nvkm_object *object, struct nvkm_gpuobj *parent,
 	} else {
 		nvkm_wo32(*pgpuobj, 0xf4, 0);
 		nvkm_wo32(*pgpuobj, 0xf8, 0);
-		/* XXX bisect FECS mailbox6 0x20: patch list off when nouveau.xpatch=0 */
-		nvkm_wo32(*pgpuobj, 0x10, gf100_gr_xpatch ? chan->mmio_nr / 2 : 0);
+		nvkm_wo32(*pgpuobj, 0x10, chan->mmio_nr / 2);
 		nvkm_wo32(*pgpuobj, 0x14, lower_32_bits(chan->mmio_vma->addr));
 		nvkm_wo32(*pgpuobj, 0x18, upper_32_bits(chan->mmio_vma->addr));
 		nvkm_wo32(*pgpuobj, 0x1c, 1);

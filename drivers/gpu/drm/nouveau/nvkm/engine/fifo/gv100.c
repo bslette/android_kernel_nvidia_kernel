@@ -194,14 +194,10 @@ gv100_runl_insert_chan(struct nvkm_chan *chan, struct nvkm_memory *memory, u64 o
 	nvkm_wo32(memory, offset + 0xc, upper_32_bits(inst));
 }
 
-/* XXX bring-up: TSG timeslice = 128 << scale us (default 3 = 1 ms, as nvgpu) */
-static int gv100_tslice_scale = 3;
-module_param_named(tslice_scale, gv100_tslice_scale, int, 0644);
-
 void
 gv100_runl_insert_cgrp(struct nvkm_cgrp *cgrp, struct nvkm_memory *memory, u64 offset)
 {
-	nvkm_wo32(memory, offset + 0x0, (128 << 24) | ((gv100_tslice_scale & 0xf) << 16) | 0x00000001);
+	nvkm_wo32(memory, offset + 0x0, (128 << 24) | (3 << 16) | 0x00000001);
 	nvkm_wo32(memory, offset + 0x4, cgrp->chan_nr);
 	nvkm_wo32(memory, offset + 0x8, cgrp->id);
 	nvkm_wo32(memory, offset + 0xc, 0x00000000);
@@ -498,28 +494,6 @@ gv100_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	return nvkm_fifo_new_(&gv100_fifo, device, type, inst, pfifo);
 }
 
-/*
- * GV11B: Tegra instmem has no BAR2 mappings yet, so the CE method buffer
- * pointer (ram_in_eng_method_buffer_addr, inst+0x220) is left at 0. It is
- * only used to save CE methods on a fault.
- * XXX implement BAR2 for Tegra instmem and point this at a real buffer.
- */
-static void
-gv11b_ectx_ce_bind(struct nvkm_engn *engn, struct nvkm_cctx *cctx, struct nvkm_chan *chan)
-{
-	nvkm_kmap(chan->inst);
-	nvkm_wo32(chan->inst, 0x220, 0x00000000);
-	nvkm_wo32(chan->inst, 0x224, 0x00000000);
-	nvkm_mo32(chan->inst, 0x0ac, 0x00020000, cctx ? 0x00020000 : 0x00000000);
-	nvkm_done(chan->inst);
-}
-
-static const struct nvkm_engn_func
-gv11b_engn_ce = {
-	.chsw = gk104_engn_chsw,
-	.cxid = gk104_engn_cxid,
-	.bind = gv11b_ectx_ce_bind,
-};
 
 /*
  * GV11B: the channel instance pointer (ccsr_channel_inst) needs its aperture
@@ -710,26 +684,6 @@ gv11b_fifo_intr_ctxsw_timeout(struct nvkm_fifo *fifo)
 				  engn->id, state[(info >> 14) & 3], info & 0x3fff,
 				  (info >> 16) & 0x3fff, status[info >> 30]);
 
-			{	/* XXX GV11B bring-up: one-shot snapshot of GR/FECS at the timeout */
-				static int dumped;
-				if (!dumped++) {
-					int m;
-					nvkm_warn(subdev, "XXX gr_status %08x gr_engine_status %08x eng_status %08x pgraph intr %08x\n",
-						  nvkm_rd32(device, 0x400700), nvkm_rd32(device, 0x40060c),
-						  nvkm_rd32(device, 0x002640 + engn->id * 8), nvkm_rd32(device, 0x400100));
-					nvkm_warn(subdev, "XXX fecs cur_ctx %08x new_ctx %08x host_int %08x cpuctl %08x irqstat %08x\n",
-						  nvkm_rd32(device, 0x409b00), nvkm_rd32(device, 0x409b04),
-						  nvkm_rd32(device, 0x409c18), nvkm_rd32(device, 0x409100),
-						  nvkm_rd32(device, 0x409008));
-					for (m = 0; m < 16; m += 4)
-						nvkm_warn(subdev, "XXX fecs mbox %d-%d: %08x %08x %08x %08x\n", m, m + 3,
-							  nvkm_rd32(device, 0x409800 + m * 4), nvkm_rd32(device, 0x409804 + m * 4),
-							  nvkm_rd32(device, 0x409808 + m * 4), nvkm_rd32(device, 0x40980c + m * 4));
-					nvkm_warn(subdev, "XXX gpccs cpuctl %08x mbox0 %08x\n",
-						  nvkm_rd32(device, 0x41a100), nvkm_rd32(device, 0x41a040));
-				}
-			}
-
 			/* ACK_RECEIVED/DROPPED_TIMEOUT: the switch completed, nothing stuck. */
 			if (info & 0xc0000000 || id < 0)
 				continue;
@@ -775,7 +729,7 @@ gv11b_fifo = {
 	.runl = &gv100_runl,
 	.runq = &gv100_runq,
 	.engn = &gv100_engn,
-	.engn_ce = &gv11b_engn_ce,
+	.engn_ce = &gv100_engn_ce,
 	.cgrp = {{ 0, 0, KEPLER_CHANNEL_GROUP_A  }, &gk110_cgrp, .force = true },
 	.chan = {{ 0, 0,  VOLTA_CHANNEL_GPFIFO_A }, &gv11b_chan },
 };

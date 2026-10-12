@@ -59,6 +59,22 @@ gv11b_bar_bar1_init(struct nvkm_bar *base)
 	nvkm_wr32(device, 0x001704, 0xa0000000 | addr);
 }
 
+/*
+ * GV11B BAR2: GPU-internal address space (Volta CE method buffers live in
+ * BAR2; with the block pointer unset the copy engine faulted with
+ * UNBOUND_INST_BLOCK on every mid-draw preemption and the ctxsw hung).
+ * nvgpu writes 0x1714 = valid | aperture | addr, like 0x1704.
+ */
+static void
+gv11b_bar_bar2_init(struct nvkm_bar *base)
+{
+	struct nvkm_device *device = base->subdev.device;
+	struct gf100_bar *bar = gf100_bar(base);
+	const u32 addr = nvkm_memory_addr(bar->bar[0].inst) >> 12;
+
+	nvkm_wr32(device, 0x001714, 0xa0000000 | addr);
+}
+
 static const struct nvkm_bar_func
 gv11b_bar_func = {
 	.dtor = gf100_bar_dtor,
@@ -66,6 +82,10 @@ gv11b_bar_func = {
 	.bar1.init = gv11b_bar_bar1_init,
 	.bar1.wait = gm107_bar_bar1_wait,
 	.bar1.vmm = gf100_bar_bar1_vmm,
+	.bar2.init = gv11b_bar_bar2_init,
+	.bar2.fini = gf100_bar_bar2_fini,
+	.bar2.wait = gm107_bar_bar2_wait,
+	.bar2.vmm = gf100_bar_bar2_vmm,
 	.flush = g84_bar_flush,
 };
 
