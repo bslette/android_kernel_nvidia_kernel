@@ -467,13 +467,6 @@ gf100_gr_chan_new(struct nvkm_gr *base, struct nvkm_chan *fifoch,
 	if (ret)
 		return ret;
 
-	/* XXX GV11B bring-up: GR buffer VA layout */
-	nvkm_warn(&gr->base.engine.subdev, "XXX ctx VAs: pagepool %llx+%llx bundle %llx+%llx attrib %llx+%llx unknown %llx+%llx mmio %llx\n",
-		  chan->pagepool->addr, chan->pagepool->size, chan->bundle_cb->addr, chan->bundle_cb->size,
-		  chan->attrib_cb->addr, chan->attrib_cb->size,
-		  chan->unknown ? chan->unknown->addr : 0ULL, chan->unknown ? chan->unknown->size : 0ULL,
-		  chan->mmio_vma->addr);
-
 	/* finally, fill in the mmio list and point the context at it */
 	nvkm_kmap(chan->mmio);
 	gr->func->grctx->pagepool(chan, chan->pagepool->addr);
@@ -1828,8 +1821,6 @@ gf100_gr_init_ctxctl_ext(struct gf100_gr *gr)
 	ret = gf100_gr_fecs_discover_image_size(gr, &gr->size);
 	if (ret)
 		return ret;
-
-	nvkm_warn(&gr->base.engine.subdev, "XXX FECS image size %08x\n", gr->size);
 
 	/* Determine how much memory is required to store ZCULL image. */
 	ret = gf100_gr_fecs_discover_zcull_image_size(gr, &gr->size_zcull);
