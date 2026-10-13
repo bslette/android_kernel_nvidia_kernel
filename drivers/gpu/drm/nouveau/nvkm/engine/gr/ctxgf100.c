@@ -1570,6 +1570,7 @@ gf100_grctx_generate(struct gf100_gr *gr, struct gf100_gr_chan *chan, struct nvk
 		for (i = 0; i < gr->size; i += 4)
 			gr->data[i / 4] = nvkm_ro32(data, CB_RESERVED + i);
 		nvkm_done(data);
+
 		ret = 0;
 	} else {
 		ret = -ENOMEM;
