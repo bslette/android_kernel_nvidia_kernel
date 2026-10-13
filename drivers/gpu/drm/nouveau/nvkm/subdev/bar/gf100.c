@@ -93,10 +93,14 @@ gf100_bar_oneinit_bar(struct gf100_bar *bar, struct gf100_barN *bar_vm,
 	if (ret)
 		return ret;
 
-	bar_len = device->func->resource_size(device, bar_id);
-	/* Tegra (GV11B): no BAR2 window; BAR2 is only used GPU-side. */
-	if (!bar_len && bar_id == NVKM_BAR2_INST && device->func->tegra)
+	/*
+	 * Tegra (GV11B): there is no BAR2 window (the Tegra device only has
+	 * BAR0/BAR1 resources); BAR2 is only used GPU-side.
+	 */
+	if (bar_id == NVKM_BAR2_INST && device->func->tegra)
 		bar_len = 32 << 20;
+	else
+		bar_len = device->func->resource_size(device, bar_id);
 	if (!bar_len)
 		return -ENOMEM;
 	if (bar_id == NVKM_BAR2_INST && bar->bar2_halve)
