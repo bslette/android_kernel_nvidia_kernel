@@ -17,6 +17,8 @@
 			cd-gpios = <&gpio TEGRA194_MAIN_GPIO(G, 7) GPIO_ACTIVE_LOW>;
 			disable-wp;
 			vmmc-supply = <&vdd_3v3_sd>;
+			/* DDR50 reads fail on this slot; SDR50 works. */
+			/delete-property/ sd-uhs-ddr50;
 		};
 	};
 
