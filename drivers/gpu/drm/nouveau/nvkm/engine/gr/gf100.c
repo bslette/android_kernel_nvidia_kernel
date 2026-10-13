@@ -977,6 +977,19 @@ gf100_gr_fecs_set_watchdog_timeout(struct gf100_gr *gr, u32 timeout)
 	nvkm_wr32(device, 0x409800, 0x00000000);
 	nvkm_wr32(device, 0x409500, timeout);
 	nvkm_wr32(device, 0x409504, 0x00000021);
+
+	/*
+	 * Wait for FECS to acknowledge (mailbox 1). Otherwise the late ack can
+	 * land after the next method cleared the mailbox and be read as its
+	 * result: on GV11B the main image size came back as 1 (instead of
+	 * 0x34c00), the golden context buffer was 4 KiB, and FECS faulted
+	 * writing past it (FAULT_DURING_CTXSW).
+	 */
+	if (nvkm_msec(device, 2000,
+		if (nvkm_rd32(device, 0x409800))
+			break;
+	) < 0)
+		nvkm_warn(&gr->base.engine.subdev, "FECS set watchdog timeout: no ack\n");
 }
 
 static bool
@@ -1594,6 +1607,12 @@ gf100_gr_ctxctl_isr(struct gf100_gr *gr)
 		gf100_gr_ctxctl_debug(gr);
 		nvkm_wr32(device, 0x409c20, 0x00080000);
 		stat &= ~0x00080000;
+	}
+
+	if (stat & 0x00000001) {
+		/* ctxsw_intr0: ucode error, code in mailbox 6 (as nvgpu reports). */
+		nvkm_error(subdev, "FECS ctxsw intr0, mailbox6 %08x\n",
+			   nvkm_rd32(device, 0x409818));
 	}
 
 	if (stat) {

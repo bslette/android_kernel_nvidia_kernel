@@ -22,6 +22,10 @@
 #include "gf100.h"
 #include "ctxgf100.h"
 
+#include <core/firmware.h>
+#include <subdev/acr.h>
+
+#include <nvfw/flcn.h>
 #include <nvif/class.h>
 
 static void
@@ -339,4 +343,217 @@ int
 gv100_gr_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst, struct nvkm_gr **pgr)
 {
 	return gf100_gr_new_(gv100_gr_fwif, device, type, inst, pgr);
+}
+
+/*
+ * GV11B (Tegra194): GV100 graphics with firmware from NVIDIA's netlist
+ * (NET_img.bin, as nvgpu uses it) and LS FECS/GPCCS bootstrapped by the PMU.
+ */
+static const struct gf100_gr_func
+gv11b_gr = {
+	.oneinit_tiles = gm200_gr_oneinit_tiles,
+	.oneinit_sm_id = gv100_gr_oneinit_sm_id,
+	.init = gf100_gr_init,
+	.init_419bd8 = gv100_gr_init_419bd8,
+	.init_gpc_mmu = gm200_gr_init_gpc_mmu,
+	.init_vsc_stream_master = gk104_gr_init_vsc_stream_master,
+	.init_zcull = gf117_gr_init_zcull,
+	.init_num_active_ltcs = gm200_gr_init_num_active_ltcs,
+	.init_rop_active_fbps = gp100_gr_init_rop_active_fbps,
+	.init_swdx_pes_mask = gp102_gr_init_swdx_pes_mask,
+	.init_fecs_exceptions = gp100_gr_init_fecs_exceptions,
+	.init_ds_hww_esr_2 = gm200_gr_init_ds_hww_esr_2,
+	.init_sked_hww_esr = gk104_gr_init_sked_hww_esr,
+	.init_ppc_exceptions = gk104_gr_init_ppc_exceptions,
+	.init_504430 = gv100_gr_init_504430,
+	.init_shader_exceptions = gv100_gr_init_shader_exceptions,
+	.init_rop_exceptions = gf100_gr_init_rop_exceptions,
+	.init_exception2 = gf100_gr_init_exception2,
+	.init_4188a4 = gv100_gr_init_4188a4,
+	.trap_mp = gv100_gr_trap_mp,
+	.fecs.reset = gf100_gr_fecs_reset,
+	.rops = gm200_gr_rops,
+	.gpc_nr = 6,
+	.tpc_nr = 7,
+	.ppc_nr = 3,
+	.grctx = &gv100_grctx,
+	.zbc = &gp102_gr_zbc,
+	.sclass = {
+		{ -1, -1, FERMI_TWOD_A },
+		{ -1, -1, KEPLER_INLINE_TO_MEMORY_B },
+		{ -1, -1, VOLTA_A, &gf100_fermi },
+		{ -1, -1, VOLTA_COMPUTE_A },
+		{}
+	}
+};
+
+/* LS FECS/GPCCS loader data as nvgpu writes it: flcn_bl_dmem_desc_v1 + argc 1. */
+struct gv11b_gr_bl_desc {
+	struct flcn_bl_dmem_desc_v1 v1;
+	u32 argc;
+	u32 argv;
+} __packed;
+
+static void
+gv11b_gr_acr_bld_write(struct nvkm_acr *acr, u32 bld, struct nvkm_acr_lsfw *lsfw)
+{
+	const u64 base = lsfw->offset.img + lsfw->app_start_offset;
+	const struct gv11b_gr_bl_desc hdr = {
+		.v1.ctx_dma = FALCON_DMAIDX_UCODE,
+		.v1.code_dma_base = base + lsfw->app_resident_code_offset,
+		.v1.non_sec_code_off = lsfw->app_resident_code_offset,
+		.v1.non_sec_code_size = lsfw->app_resident_code_size,
+		.v1.code_entry_point = lsfw->app_imem_entry,
+		.v1.data_dma_base = base + lsfw->app_resident_data_offset,
+		.v1.data_size = lsfw->app_resident_data_size,
+		.argc = 1,
+	};
+
+	nvkm_wobj(acr->wpr, bld, &hdr, sizeof(hdr));
+}
+
+static void
+gv11b_gr_acr_bld_patch(struct nvkm_acr *acr, u32 bld, s64 adjust)
+{
+	struct flcn_bl_dmem_desc_v1 hdr;
+
+	nvkm_robj(acr->wpr, bld, &hdr, sizeof(hdr));
+	hdr.code_dma_base = hdr.code_dma_base + adjust;
+	hdr.data_dma_base = hdr.data_dma_base + adjust;
+	nvkm_wobj(acr->wpr, bld, &hdr, sizeof(hdr));
+	flcn_bl_dmem_desc_v1_dump(&acr->subdev, &hdr);
+}
+
+static const struct nvkm_acr_lsf_func
+gv11b_gr_gpccs_acr = {
+	.flags = NVKM_ACR_LSF_FORCE_PRIV_LOAD,
+	.bl_entry = 0x3400,
+	.bld_size = sizeof(struct gv11b_gr_bl_desc),
+	.bld_write = gv11b_gr_acr_bld_write,
+	.bld_patch = gv11b_gr_acr_bld_patch,
+};
+
+static const struct nvkm_acr_lsf_func
+gv11b_gr_fecs_acr = {
+	.bl_entry = 0x7e00,
+	.bld_size = sizeof(struct gv11b_gr_bl_desc),
+	.bld_write = gv11b_gr_acr_bld_write,
+	.bld_patch = gv11b_gr_acr_bld_patch,
+};
+
+struct gv11b_netlist_region {
+	u32 region_id;
+	u32 data_size;
+	u32 data_offset;
+};
+
+static int
+gv11b_gr_av64_to_init(struct nvkm_blob *blob, struct gf100_gr_pack **ppack)
+{
+	struct gf100_gr_init *init;
+	struct gf100_gr_pack *pack;
+	int nent = blob->size / 12, i;
+
+	pack = vzalloc((sizeof(*pack) * 2) + (sizeof(*init) * (nent + 1)));
+	if (!pack)
+		return -ENOMEM;
+
+	init = (void *)(pack + 2);
+	pack[0].init = init;
+	pack[0].type = 64;
+	for (i = 0; i < nent; i++) {
+		const u32 *av = (const u32 *)blob->data + i * 3;
+
+		init[i].addr = av[0];
+		init[i].data = ((u64)av[1] << 32) | av[2];
+		init[i].count = 1;
+		init[i].pitch = 1;
+	}
+
+	*ppack = pack;
+	return 0;
+}
+
+/* NET_img.bin loader (regions as in ga102_gr_load; 6 = sw_nonctx on gv11b). */
+static int
+gv11b_gr_load(struct gf100_gr *gr, int ver, const struct gf100_gr_fwif *fwif)
+{
+	struct nvkm_subdev *subdev = &gr->base.engine.subdev;
+	const struct gv11b_netlist_region *fi = NULL, *fd = NULL, *gi = NULL, *gd = NULL;
+	const struct firmware *fw;
+	u32 nr;
+	int ret, i;
+
+	ret = nvkm_firmware_get(subdev, "gr/NET_img", 0, &fw);
+	if (ret)
+		return ret;
+
+	nr = ((const u32 *)fw->data)[1];
+	for (i = 0; i < nr; i++) {
+		const struct gv11b_netlist_region *reg =
+			(const void *)fw->data + 8 + i * sizeof(*reg);
+		struct nvkm_blob blob = {
+			.data = (void *)fw->data + reg->data_offset,
+			.size = reg->data_size,
+		};
+
+		switch (reg->region_id) {
+		case  0: fd = reg; break;
+		case  1: fi = reg; break;
+		case  2: gd = reg; break;
+		case  3: gi = reg; break;
+		case  4: ret = gk20a_gr_av_to_init(&blob, &gr->bundle); break;
+		case  5: ret = gk20a_gr_aiv_to_init(&blob, &gr->sw_ctx); break;
+		case  6: ret = gk20a_gr_av_to_init(&blob, &gr->sw_nonctx); break;
+		case  7: ret = gk20a_gr_av_to_method(&blob, &gr->method); break;
+		case 28: ret = tu102_gr_av_to_init_veid(&blob, &gr->bundle_veid); break;
+		case 34: ret = gv11b_gr_av64_to_init(&blob, &gr->bundle64); break;
+		default:
+			break;
+		}
+		if (ret)
+			goto done;
+	}
+
+	if (!fi || !fd || !gi || !gd) {
+		ret = -EINVAL;
+		goto done;
+	}
+
+	ret = nvkm_acr_lsfw_load_bl_sig_net(subdev, &gr->fecs.falcon, NVKM_ACR_LSF_FECS,
+					    "gr/fecs_", ver, fwif->fecs,
+					    fw->data + fi->data_offset, fi->data_size,
+					    fw->data + fd->data_offset, fd->data_size);
+	if (ret)
+		goto done;
+
+	ret = nvkm_acr_lsfw_load_bl_sig_net(subdev, &gr->gpccs.falcon, NVKM_ACR_LSF_GPCCS,
+					    "gr/gpccs_", ver, fwif->gpccs,
+					    fw->data + gi->data_offset, gi->data_size,
+					    fw->data + gd->data_offset, gd->data_size);
+	if (ret)
+		goto done;
+
+	gr->firmware = true;
+done:
+	nvkm_firmware_put(fw);
+	return ret;
+}
+
+MODULE_FIRMWARE("nvidia/gv11b/gr/NET_img.bin");
+MODULE_FIRMWARE("nvidia/gv11b/gr/fecs_bl.bin");
+MODULE_FIRMWARE("nvidia/gv11b/gr/fecs_sig.bin");
+MODULE_FIRMWARE("nvidia/gv11b/gr/gpccs_bl.bin");
+MODULE_FIRMWARE("nvidia/gv11b/gr/gpccs_sig.bin");
+
+static const struct gf100_gr_fwif
+gv11b_gr_fwif[] = {
+	{ 0, gv11b_gr_load, &gv11b_gr, &gv11b_gr_fecs_acr, &gv11b_gr_gpccs_acr },
+	{}
+};
+
+int
+gv11b_gr_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst, struct nvkm_gr **pgr)
+{
+	return gf100_gr_new_(gv11b_gr_fwif, device, type, inst, pgr);
 }

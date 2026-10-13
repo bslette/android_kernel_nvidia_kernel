@@ -97,6 +97,9 @@ nouveau_mem_host(struct ttm_resource *reg, struct ttm_tt *tt)
 
 	if (!nouveau_drm_use_coherent_gpu_mapping(drm))
 		type = drm->ttm.type_ncoh[!!mem->kind];
+	else if (drm->client.device.info.platform == NV_DEVICE_INFO_V0_SOC)
+		/* Tegra: coherent cached memory can carry block-linear kinds. */
+		type = drm->ttm.type_host[!!mem->kind];
 	else
 		type = drm->ttm.type_host[0];
 

@@ -65,6 +65,7 @@ int gm20b_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct 
 int gp102_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
 int gp108_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
 int gp10b_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
+int gv11b_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
 int gv100_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
 int tu102_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);
 int ga102_acr_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_acr **);

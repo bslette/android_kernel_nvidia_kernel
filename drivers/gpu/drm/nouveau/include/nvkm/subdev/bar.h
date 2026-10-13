@@ -33,5 +33,6 @@ int gf100_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct 
 int gk20a_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_bar **);
 int gm107_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_bar **);
 int gm20b_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_bar **);
+int gv11b_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_bar **);
 int tu102_bar_new(struct nvkm_device *, enum nvkm_subdev_type, int inst, struct nvkm_bar **);
 #endif
