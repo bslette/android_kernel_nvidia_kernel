@@ -533,6 +533,8 @@ static inline u32 compute_phase_incr(fixed20_12 in, unsigned int out)
 static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 					     struct drm_atomic_state *state)
 {
+	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
+									   plane);
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
 									   plane);
 	struct tegra_plane_state *tegra_plane_state = to_tegra_plane_state(new_state);
@@ -563,7 +565,19 @@ static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 
 	yuv = tegra_plane_format_is_yuv(tegra_plane_state->format, &planes, &bpc);
 
-	tegra_dc_assign_shared_plane(dc, p);
+	/*
+	 * Assigning the plane ends in a blocking UPDATE/ACT_REQ poll that
+	 * returns only after the next vblank. Doing that on every flip pushed
+	 * the window registers one frame past the vblank the CRTC event was
+	 * armed for, so userspace was told the old buffer was released while
+	 * it was still being scanned out (Android: flicker/tearing because
+	 * SurfaceFlinger re-rendered into the on-screen buffer). Only assign
+	 * when the plane is newly enabled on this head or the head is modeset.
+	 */
+	if (!old_state->visible || old_state->crtc != new_state->crtc ||
+	    drm_atomic_crtc_needs_modeset(drm_atomic_get_new_crtc_state(state, new_state->crtc)) ||
+	    !tegra_dc_owns_shared_plane(dc, p))
+		tegra_dc_assign_shared_plane(dc, p);
 
 	tegra_plane_writel(p, VCOUNTER, DC_WIN_CORE_ACT_CONTROL);
 
