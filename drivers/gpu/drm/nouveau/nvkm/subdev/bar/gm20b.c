@@ -21,6 +21,8 @@
  */
 #include "gf100.h"
 
+#include <core/memory.h>
+
 static const struct nvkm_bar_func
 gm20b_bar_func = {
 	.dtor = gf100_bar_dtor,
@@ -36,6 +38,42 @@ gm20b_bar_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	      struct nvkm_bar **pbar)
 {
 	int ret = gf100_bar_new_(&gm20b_bar_func, device, type, inst, pbar);
+	if (ret == 0)
+		(*pbar)->iomap_uncached = true;
+	return ret;
+}
+
+/*
+ * GV11B: the BAR1 block pointer needs its aperture (bits 29:28) like every
+ * other instance pointer on this chip; with 0 (VRAM) BAR1 accesses (e.g.
+ * FIFO-owned USERD, GP_PUT) never reach memory. nvgpu uses 3 (ncoh) with
+ * uncached memory; nouveau's instmem is cached on this IO-coherent SoC.
+ */
+static void
+gv11b_bar_bar1_init(struct nvkm_bar *base)
+{
+	struct nvkm_device *device = base->subdev.device;
+	struct gf100_bar *bar = gf100_bar(base);
+	const u32 addr = nvkm_memory_addr(bar->bar[1].inst) >> 12;
+
+	nvkm_wr32(device, 0x001704, 0xa0000000 | addr);
+}
+
+static const struct nvkm_bar_func
+gv11b_bar_func = {
+	.dtor = gf100_bar_dtor,
+	.oneinit = gf100_bar_oneinit,
+	.bar1.init = gv11b_bar_bar1_init,
+	.bar1.wait = gm107_bar_bar1_wait,
+	.bar1.vmm = gf100_bar_bar1_vmm,
+	.flush = g84_bar_flush,
+};
+
+int
+gv11b_bar_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+	      struct nvkm_bar **pbar)
+{
+	int ret = gf100_bar_new_(&gv11b_bar_func, device, type, inst, pbar);
 	if (ret == 0)
 		(*pbar)->iomap_uncached = true;
 	return ret;

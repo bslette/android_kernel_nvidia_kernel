@@ -88,6 +88,10 @@ static const struct of_device_id nouveau_platform_match[] = {
 		.compatible = "nvidia,gp10b",
 		.data = &gp10b_platform_data,
 	},
+	{
+		.compatible = "nvidia,gv11b",
+		.data = &gp10b_platform_data,
+	},
 	{ }
 };
 

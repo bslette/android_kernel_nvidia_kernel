@@ -343,6 +343,13 @@ nouveau_accel_ce_init(struct nouveau_drm *drm)
 	 * engine, to use for TTM buffer moves.
 	 */
 	runm = nvif_fifo_runlist_ce(device);
+	/*
+	 * Prefer a CE runlist that doesn't also carry GR (on GV11B, CE0/CE1
+	 * share runlist 0 with GR, CE2 is alone on runlist 1), so the kernel
+	 * copy channel isn't scheduled alongside GR work.
+	 */
+	if (runm & ~nvif_fifo_runlist(device, NV_DEVICE_HOST_RUNLIST_ENGINES_GR))
+		runm &= ~nvif_fifo_runlist(device, NV_DEVICE_HOST_RUNLIST_ENGINES_GR);
 	if (!runm) {
 		NV_DEBUG(drm, "no ce runlist\n");
 		return;

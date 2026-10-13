@@ -291,6 +291,8 @@ int gm20b_vmm_new(struct nvkm_mmu *, bool, u64, u64, void *, u32,
 int gp100_vmm_new(struct nvkm_mmu *, bool, u64, u64, void *, u32,
 		  struct lock_class_key *, const char *,
 		  struct nvkm_vmm **);
+int gv11b_vmm_new(struct nvkm_mmu *, bool, u64, u64, void *, u32,
+		  struct lock_class_key *, const char *, struct nvkm_vmm **);
 int gp10b_vmm_new(struct nvkm_mmu *, bool, u64, u64, void *, u32,
 		  struct lock_class_key *, const char *,
 		  struct nvkm_vmm **);
