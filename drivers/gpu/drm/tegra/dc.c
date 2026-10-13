@@ -2387,22 +2387,7 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
 static void tegra_crtc_atomic_begin(struct drm_crtc *crtc,
 				    struct drm_atomic_state *state)
 {
-	unsigned long flags;
-
 	tegra_crtc_update_memory_bandwidth(crtc, state, true);
-
-	if (crtc->state->event) {
-		spin_lock_irqsave(&crtc->dev->event_lock, flags);
-
-		if (drm_crtc_vblank_get(crtc) != 0)
-			drm_crtc_send_vblank_event(crtc, crtc->state->event);
-		else
-			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
-
-		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
-
-		crtc->state->event = NULL;
-	}
 }
 
 static void tegra_crtc_atomic_flush(struct drm_crtc *crtc,
@@ -2421,6 +2406,28 @@ static void tegra_crtc_atomic_flush(struct drm_crtc *crtc,
 	value = dc_state->planes | GENERAL_ACT_REQ;
 	tegra_dc_writel(dc, value, DC_CMD_STATE_CONTROL);
 	value = tegra_dc_readl(dc, DC_CMD_STATE_CONTROL);
+
+	/*
+	 * Arm the event only now that every plane has been programmed and the
+	 * state latch requested. On Tegra186+ the shared-plane update blocks
+	 * until the vblank after its UPDATE/ACT_REQ; with the event armed in
+	 * ->atomic_begin() it fired at that earlier vblank, so userspace was
+	 * told the old buffer was free while it was still being scanned out.
+	 */
+	if (crtc->state->event) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&crtc->dev->event_lock, flags);
+
+		if (drm_crtc_vblank_get(crtc) != 0)
+			drm_crtc_send_vblank_event(crtc, crtc->state->event);
+		else
+			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
+
+		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
+
+		crtc->state->event = NULL;
+	}
 }
 
 static bool tegra_plane_is_cursor(const struct drm_plane_state *state)

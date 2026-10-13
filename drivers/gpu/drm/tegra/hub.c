@@ -191,7 +191,7 @@ void tegra_display_hub_cleanup(struct tegra_display_hub *hub)
 	}
 }
 
-static void tegra_shared_plane_update(struct tegra_plane *plane)
+static void tegra_shared_plane_update(struct tegra_plane *plane, bool wait)
 {
 	struct tegra_dc *dc = plane->dc;
 	unsigned long timeout;
@@ -199,6 +199,9 @@ static void tegra_shared_plane_update(struct tegra_plane *plane)
 
 	mask = COMMON_UPDATE | WIN_A_UPDATE << plane->base.index;
 	tegra_dc_writel(dc, mask, DC_CMD_STATE_CONTROL);
+
+	if (!wait)
+		return;
 
 	timeout = jiffies + msecs_to_jiffies(1000);
 
@@ -211,7 +214,7 @@ static void tegra_shared_plane_update(struct tegra_plane *plane)
 	}
 }
 
-static void tegra_shared_plane_activate(struct tegra_plane *plane)
+static void tegra_shared_plane_activate(struct tegra_plane *plane, bool wait)
 {
 	struct tegra_dc *dc = plane->dc;
 	unsigned long timeout;
@@ -219,6 +222,9 @@ static void tegra_shared_plane_activate(struct tegra_plane *plane)
 
 	mask = COMMON_ACTREQ | WIN_A_ACT_REQ << plane->base.index;
 	tegra_dc_writel(dc, mask, DC_CMD_STATE_CONTROL);
+
+	if (!wait)
+		return;
 
 	timeout = jiffies + msecs_to_jiffies(1000);
 
@@ -366,7 +372,7 @@ static void tegra_shared_plane_setup_scaler(struct tegra_plane *plane)
 }
 
 static void tegra_dc_assign_shared_plane(struct tegra_dc *dc,
-					 struct tegra_plane *plane)
+					 struct tegra_plane *plane, bool wait)
 {
 	u32 value;
 	int err;
@@ -412,8 +418,8 @@ static void tegra_dc_assign_shared_plane(struct tegra_dc *dc,
 
 	tegra_shared_plane_setup_scaler(plane);
 
-	tegra_shared_plane_update(plane);
-	tegra_shared_plane_activate(plane);
+	tegra_shared_plane_update(plane, wait);
+	tegra_shared_plane_activate(plane, wait);
 }
 
 static void tegra_dc_remove_shared_plane(struct tegra_dc *dc,
@@ -530,12 +536,32 @@ static inline u32 compute_phase_incr(fixed20_12 in, unsigned int out)
 	return lower_32_bits(tmp1);
 }
 
+static bool tegra_plane_is_pure_flip(struct drm_atomic_state *state,
+				     struct drm_plane_state *old,
+				     struct drm_plane_state *new)
+{
+	struct tegra_plane_state *o = to_tegra_plane_state(old);
+	struct tegra_plane_state *n = to_tegra_plane_state(new);
+
+	return old->visible && old->crtc == new->crtc &&
+	       !drm_atomic_crtc_needs_modeset(drm_atomic_get_new_crtc_state(state, new->crtc)) &&
+	       old->crtc_x == new->crtc_x && old->crtc_y == new->crtc_y &&
+	       old->crtc_w == new->crtc_w && old->crtc_h == new->crtc_h &&
+	       old->src_x == new->src_x && old->src_y == new->src_y &&
+	       old->src_w == new->src_w && old->src_h == new->src_h &&
+	       old->fb && new->fb && old->fb->format == new->fb->format &&
+	       old->fb->modifier == new->fb->modifier &&
+	       old->normalized_zpos == new->normalized_zpos &&
+	       o->format == n->format && o->swap == n->swap &&
+	       o->tiling.mode == n->tiling.mode;
+}
+
 static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 					     struct drm_atomic_state *state)
 {
-	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
-									   plane);
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
+									   plane);
+	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
 									   plane);
 	struct tegra_plane_state *tegra_plane_state = to_tegra_plane_state(new_state);
 	struct tegra_dc *dc = to_tegra_dc(new_state->crtc);
@@ -566,18 +592,14 @@ static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 	yuv = tegra_plane_format_is_yuv(tegra_plane_state->format, &planes, &bpc);
 
 	/*
-	 * Assigning the plane ends in a blocking UPDATE/ACT_REQ poll that
-	 * returns only after the next vblank. Doing that on every flip pushed
-	 * the window registers one frame past the vblank the CRTC event was
-	 * armed for, so userspace was told the old buffer was released while
-	 * it was still being scanned out (Android: flicker/tearing because
-	 * SurfaceFlinger re-rendered into the on-screen buffer). Only assign
-	 * when the plane is newly enabled on this head or the head is modeset.
+	 * The full assignment ends in a blocking UPDATE/ACT_REQ poll that only
+	 * returns after the next vblank, which makes every commit span two
+	 * frames. For a pure buffer flip (same head, geometry and format) the
+	 * window programming is repeated but not waited for: ->atomic_flush()
+	 * requests the latch for every plane of the commit anyway.
 	 */
-	if (!old_state->visible || old_state->crtc != new_state->crtc ||
-	    drm_atomic_crtc_needs_modeset(drm_atomic_get_new_crtc_state(state, new_state->crtc)) ||
-	    !tegra_dc_owns_shared_plane(dc, p))
-		tegra_dc_assign_shared_plane(dc, p);
+	tegra_dc_assign_shared_plane(dc, p,
+				     !tegra_plane_is_pure_flip(state, old_state, new_state));
 
 	tegra_plane_writel(p, VCOUNTER, DC_WIN_CORE_ACT_CONTROL);
 
