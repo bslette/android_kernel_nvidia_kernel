@@ -722,8 +722,8 @@ static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 
 	tegra_plane_writel(p, value, DC_WIN_SET_PARAMS);
 
-	value = OFFSET_X(new_state->src_y >> 16) |
-		OFFSET_Y(new_state->src_x >> 16);
+	value = OFFSET_X(new_state->src_x >> 16) |
+		OFFSET_Y(new_state->src_y >> 16);
 	tegra_plane_writel(p, value, DC_WINBUF_CROPPED_POINT);
 
 	if (dc->soc->supports_block_linear) {
