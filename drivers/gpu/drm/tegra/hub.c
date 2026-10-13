@@ -530,6 +530,23 @@ static inline u32 compute_phase_incr(fixed20_12 in, unsigned int out)
 	return lower_32_bits(tmp1);
 }
 
+static bool tegra_plane_is_pure_flip(struct drm_plane_state *old,
+				     struct drm_plane_state *new)
+{
+	struct tegra_plane_state *o = to_tegra_plane_state(old);
+	struct tegra_plane_state *n = to_tegra_plane_state(new);
+
+	return old->crtc_x == new->crtc_x && old->crtc_y == new->crtc_y &&
+	       old->crtc_w == new->crtc_w && old->crtc_h == new->crtc_h &&
+	       old->src_x == new->src_x && old->src_y == new->src_y &&
+	       old->src_w == new->src_w && old->src_h == new->src_h &&
+	       old->fb && new->fb && old->fb->format == new->fb->format &&
+	       old->fb->modifier == new->fb->modifier &&
+	       old->normalized_zpos == new->normalized_zpos &&
+	       o->format == n->format && o->swap == n->swap &&
+	       o->tiling.mode == n->tiling.mode;
+}
+
 static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 					     struct drm_atomic_state *state)
 {
@@ -571,11 +588,16 @@ static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 	 * the window registers one frame past the vblank the CRTC event was
 	 * armed for, so userspace was told the old buffer was released while
 	 * it was still being scanned out (Android: flicker/tearing because
-	 * SurfaceFlinger re-rendered into the on-screen buffer). Only assign
-	 * when the plane is newly enabled on this head or the head is modeset.
+	 * SurfaceFlinger re-rendered into the on-screen buffer). Skip it only
+	 * for a pure buffer flip: the plane stays visible on the same head with
+	 * the same position, size, source crop and format. Any of those
+	 * changing (e.g. drm_hwcomposer moving a different layer onto this
+	 * plane) still needs the assignment, otherwise the window group keeps
+	 * scanning out with the old setup.
 	 */
 	if (!old_state->visible || old_state->crtc != new_state->crtc ||
 	    drm_atomic_crtc_needs_modeset(drm_atomic_get_new_crtc_state(state, new_state->crtc)) ||
+	    !tegra_plane_is_pure_flip(old_state, new_state) ||
 	    !tegra_dc_owns_shared_plane(dc, p))
 		tegra_dc_assign_shared_plane(dc, p);
 
