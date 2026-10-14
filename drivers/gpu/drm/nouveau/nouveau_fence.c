@@ -487,6 +487,12 @@ static bool nouveau_fence_no_signaling(struct dma_fence *f)
 	 */
 	if (nouveau_fence_is_signaled(f)) {
 		list_del(&fence->head);
+		/*
+		 * Off the pending list, so nouveau_fence_context_kill() will
+		 * never clear this pointer: drop it now like nouveau_fence_signal()
+		 * does, or it dangles once the channel is freed.
+		 */
+		rcu_assign_pointer(fence->channel, NULL);
 
 		dma_fence_put(&fence->base);
 		return false;
