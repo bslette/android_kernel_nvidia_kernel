@@ -694,6 +694,7 @@ static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
 
 	tegra_plane_writel(p, upper_32_bits(base), DC_WINBUF_START_ADDR_HI);
 	tegra_plane_writel(p, lower_32_bits(base), DC_WINBUF_START_ADDR);
+	tegra_dc_expect_flip(dc, p, lower_32_bits(base));
 
 	value = PITCH(fb->pitches[0]);
 	tegra_plane_writel(p, value, DC_WIN_PLANAR_STORAGE);
