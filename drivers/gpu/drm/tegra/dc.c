@@ -2234,6 +2234,12 @@ static void tegra_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	spin_lock_irq(&crtc->dev->event_lock);
 
+	if (dc->event) {
+		drm_crtc_send_vblank_event(crtc, dc->event);
+		drm_crtc_vblank_put(crtc);
+		dc->event = NULL;
+	}
+
 	if (crtc->state->event) {
 		drm_crtc_send_vblank_event(crtc, crtc->state->event);
 		crtc->state->event = NULL;
@@ -2408,21 +2414,24 @@ static void tegra_crtc_atomic_flush(struct drm_crtc *crtc,
 	value = tegra_dc_readl(dc, DC_CMD_STATE_CONTROL);
 
 	/*
-	 * Arm the event only now that every plane has been programmed and the
-	 * state latch requested. On Tegra186+ the shared-plane update blocks
-	 * until the vblank after its UPDATE/ACT_REQ; with the event armed in
-	 * ->atomic_begin() it fired at that earlier vblank, so userspace was
-	 * told the old buffer was free while it was still being scanned out.
+	 * Hold the event until the hardware has actually latched this state.
+	 * Arming it for "the next vblank" is not enough: when ACT_REQ is
+	 * written just before a vblank the latch slips to the following one,
+	 * the event still fires, userspace releases (and the kernel unmaps)
+	 * the buffer that is still being scanned out, and the display reads
+	 * an unmapped IOVA (SMMU translation fault + EMEM decode errors).
 	 */
 	if (crtc->state->event) {
 		unsigned long flags;
 
 		spin_lock_irqsave(&crtc->dev->event_lock, flags);
 
-		if (drm_crtc_vblank_get(crtc) != 0)
+		if (drm_crtc_vblank_get(crtc) != 0) {
 			drm_crtc_send_vblank_event(crtc, crtc->state->event);
-		else
-			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
+		} else {
+			WARN_ON(dc->event);
+			dc->event = crtc->state->event;
+		}
 
 		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
 
@@ -2635,6 +2644,26 @@ static const struct drm_crtc_helper_funcs tegra_crtc_helper_funcs = {
 	.atomic_disable = tegra_crtc_atomic_disable,
 };
 
+#define TEGRA_DC_ACT_REQ_PENDING (GENERAL_ACT_REQ | 0x7e | CURSOR_ACT_REQ | COMMON_ACTREQ)
+
+/* Called from the vblank interrupt: send a held flip event once the latch is done. */
+static void tegra_dc_finish_flip(struct tegra_dc *dc)
+{
+	struct drm_crtc *crtc = &dc->base;
+	unsigned long flags;
+
+	spin_lock_irqsave(&crtc->dev->event_lock, flags);
+
+	if (dc->event &&
+	    !(tegra_dc_readl(dc, DC_CMD_STATE_CONTROL) & TEGRA_DC_ACT_REQ_PENDING)) {
+		drm_crtc_send_vblank_event(crtc, dc->event);
+		drm_crtc_vblank_put(crtc);
+		dc->event = NULL;
+	}
+
+	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
+}
+
 static irqreturn_t tegra_dc_irq(int irq, void *data)
 {
 	struct tegra_dc *dc = data;
@@ -2656,6 +2685,7 @@ static irqreturn_t tegra_dc_irq(int irq, void *data)
 		dev_dbg(dc->dev, "%s(): vertical blank\n", __func__);
 		*/
 		drm_crtc_handle_vblank(&dc->base);
+		tegra_dc_finish_flip(dc);
 		dc->stats.vblank_total++;
 		dc->stats.vblank++;
 	}
