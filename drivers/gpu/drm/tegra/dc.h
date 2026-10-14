@@ -86,6 +86,14 @@ struct tegra_dc {
 
 	struct drm_crtc base;
 	unsigned int powergate;
+	/*
+	 * Display mappings of buffers that left the screen; unmapped later
+	 * because the head still prefetches the old buffer after the flip.
+	 */
+	struct list_head retired;
+	spinlock_t retired_lock;
+	struct delayed_work retire_work;
+
 	int pipe;
 
 	struct clk *clk;
@@ -134,6 +142,9 @@ static inline u32 tegra_dc_readl(struct tegra_dc *dc, unsigned int offset)
 
 	return value;
 }
+
+struct host1x_bo_mapping;
+void tegra_dc_retire_mapping(struct tegra_dc *dc, struct host1x_bo_mapping *map);
 
 struct tegra_dc_window {
 	struct {
