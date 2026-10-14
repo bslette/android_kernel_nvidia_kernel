@@ -45,6 +45,10 @@ struct tegra_dc_stats {
 	unsigned long vblank_total;
 	unsigned long underflow_total;
 	unsigned long overflow_total;
+
+	unsigned long flip_sent;	/* events sent after the active address matched */
+	unsigned long flip_late;	/* vblanks where the hardware still scanned the old buffer */
+	unsigned long armed_differs;	/* active != just-armed address right after programming */
 };
 
 struct tegra_windowgroup_soc {
@@ -93,6 +97,16 @@ struct tegra_dc {
 	struct list_head retired;
 	spinlock_t retired_lock;
 	struct delayed_work retire_work;
+
+	/*
+	 * Flip completion: the event is held until every window programmed by
+	 * the commit actually scans out the new address (read back through
+	 * DC_CMD_STATE_ACCESS READ_MUX in the vblank interrupt).
+	 */
+	struct drm_pending_vblank_event *event;
+	struct tegra_plane *flip_plane[8];
+	u32 flip_addr[8];
+	unsigned long flip_mask;
 
 	int pipe;
 
@@ -144,6 +158,8 @@ static inline u32 tegra_dc_readl(struct tegra_dc *dc, unsigned int offset)
 }
 
 struct host1x_bo_mapping;
+struct tegra_plane;
+void tegra_dc_expect_flip(struct tegra_dc *dc, struct tegra_plane *plane, u32 addr);
 void tegra_dc_retire_mapping(struct tegra_dc *dc, struct host1x_bo_mapping *map);
 
 struct tegra_dc_window {
