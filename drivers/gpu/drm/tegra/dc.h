@@ -86,6 +86,9 @@ struct tegra_dc {
 
 	struct drm_crtc base;
 	unsigned int powergate;
+	/* flip event held until the hardware has latched the new state */
+	struct drm_pending_vblank_event *event;
+
 	int pipe;
 
 	struct clk *clk;
