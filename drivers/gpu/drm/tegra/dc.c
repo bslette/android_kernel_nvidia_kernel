@@ -1811,6 +1811,10 @@ static int tegra_dc_show_stats(struct seq_file *s, void *data)
 	seq_printf(s, "underflow total: %lu\n", dc->stats.underflow_total);
 	seq_printf(s, "overflow total: %lu\n", dc->stats.overflow_total);
 
+	seq_printf(s, "flip sent: %lu\n", dc->stats.flip_sent);
+	seq_printf(s, "flip late vblanks: %lu\n", dc->stats.flip_late);
+	seq_printf(s, "armed != active after programming: %lu\n", dc->stats.armed_differs);
+
 	return 0;
 }
 
@@ -2234,6 +2238,13 @@ static void tegra_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	spin_lock_irq(&crtc->dev->event_lock);
 
+	if (dc->event) {
+		drm_crtc_send_vblank_event(crtc, dc->event);
+		drm_crtc_vblank_put(crtc);
+		dc->event = NULL;
+	}
+	dc->flip_mask = 0;
+
 	if (crtc->state->event) {
 		drm_crtc_send_vblank_event(crtc, crtc->state->event);
 		crtc->state->event = NULL;
@@ -2408,21 +2419,23 @@ static void tegra_crtc_atomic_flush(struct drm_crtc *crtc,
 	value = tegra_dc_readl(dc, DC_CMD_STATE_CONTROL);
 
 	/*
-	 * Arm the event only now that every plane has been programmed and the
-	 * state latch requested. On Tegra186+ the shared-plane update blocks
-	 * until the vblank after its UPDATE/ACT_REQ; with the event armed in
-	 * ->atomic_begin() it fired at that earlier vblank, so userspace was
-	 * told the old buffer was free while it was still being scanned out.
+	 * Hold the event until the hardware really scans out the new state
+	 * (see tegra_dc_finish_flip()). A vblank alone is not proof: when
+	 * ACT_REQ lands right before it the latch slips a frame, and an early
+	 * event lets userspace render into the buffer still on screen.
 	 */
 	if (crtc->state->event) {
 		unsigned long flags;
 
 		spin_lock_irqsave(&crtc->dev->event_lock, flags);
 
-		if (drm_crtc_vblank_get(crtc) != 0)
+		if (drm_crtc_vblank_get(crtc) != 0) {
 			drm_crtc_send_vblank_event(crtc, crtc->state->event);
-		else
-			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
+			dc->flip_mask = 0;
+		} else {
+			WARN_ON(dc->event);
+			dc->event = crtc->state->event;
+		}
 
 		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
 
@@ -2635,6 +2648,65 @@ static const struct drm_crtc_helper_funcs tegra_crtc_helper_funcs = {
 	.atomic_disable = tegra_crtc_atomic_disable,
 };
 
+void tegra_dc_expect_flip(struct tegra_dc *dc, struct tegra_plane *plane, u32 addr)
+{
+	unsigned int i = plane->index;
+	u32 access, active;
+
+	if (WARN_ON(i >= ARRAY_SIZE(dc->flip_plane)))
+		return;
+
+	dc->flip_plane[i] = plane;
+	dc->flip_addr[i] = addr;
+	set_bit(i, &dc->flip_mask);
+
+	/* sanity check that READ_MUX shows the active (not the armed) copy */
+	access = tegra_dc_readl(dc, DC_CMD_STATE_ACCESS);
+	tegra_dc_writel(dc, access | READ_MUX, DC_CMD_STATE_ACCESS);
+	active = tegra_plane_readl(plane, DC_WINBUF_START_ADDR);
+	tegra_dc_writel(dc, access, DC_CMD_STATE_ACCESS);
+	if (active != addr)
+		dc->stats.armed_differs++;
+}
+
+/* vblank interrupt: send the held event once the new buffers are really scanned out */
+static void tegra_dc_finish_flip(struct tegra_dc *dc)
+{
+	struct drm_crtc *crtc = &dc->base;
+	unsigned long flags, i;
+	bool done = true;
+	u32 access;
+
+	spin_lock_irqsave(&crtc->dev->event_lock, flags);
+
+	if (!dc->event)
+		goto unlock;
+
+	if (dc->flip_mask) {
+		access = tegra_dc_readl(dc, DC_CMD_STATE_ACCESS);
+		tegra_dc_writel(dc, access | READ_MUX, DC_CMD_STATE_ACCESS);
+
+		for_each_set_bit(i, &dc->flip_mask, ARRAY_SIZE(dc->flip_plane))
+			if (tegra_plane_readl(dc->flip_plane[i], DC_WINBUF_START_ADDR) != dc->flip_addr[i])
+				done = false;
+
+		tegra_dc_writel(dc, access, DC_CMD_STATE_ACCESS);
+	}
+
+	if (done) {
+		drm_crtc_send_vblank_event(crtc, dc->event);
+		drm_crtc_vblank_put(crtc);
+		dc->event = NULL;
+		dc->flip_mask = 0;
+		dc->stats.flip_sent++;
+	} else {
+		dc->stats.flip_late++;
+	}
+
+unlock:
+	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
+}
+
 static irqreturn_t tegra_dc_irq(int irq, void *data)
 {
 	struct tegra_dc *dc = data;
@@ -2656,6 +2728,7 @@ static irqreturn_t tegra_dc_irq(int irq, void *data)
 		dev_dbg(dc->dev, "%s(): vertical blank\n", __func__);
 		*/
 		drm_crtc_handle_vblank(&dc->base);
+		tegra_dc_finish_flip(dc);
 		dc->stats.vblank_total++;
 		dc->stats.vblank++;
 	}
