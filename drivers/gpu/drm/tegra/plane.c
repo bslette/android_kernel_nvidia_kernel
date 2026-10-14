@@ -198,7 +198,7 @@ static void tegra_dc_unpin(struct tegra_dc *dc, struct tegra_plane_state *state)
 	unsigned int i;
 
 	for (i = 0; i < state->base.fb->format->num_planes; i++) {
-		host1x_bo_unpin(state->map[i]);
+		tegra_dc_retire_mapping(dc, state->map[i]);
 		state->iova[i] = DMA_MAPPING_ERROR;
 		state->map[i] = NULL;
 	}
