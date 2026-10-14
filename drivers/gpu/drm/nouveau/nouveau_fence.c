@@ -38,6 +38,18 @@
 static const struct dma_fence_ops nouveau_fence_ops_uevent;
 static const struct dma_fence_ops nouveau_fence_ops_legacy;
 
+/*
+ * Debug for the fence->channel use-after-free: fence_clear_chan=0 restores the
+ * old behaviour (stale pointer left behind), fence_dangling counts syncs that
+ * found a channel pointer in a fence whose channel was already destroyed.
+ */
+static bool fence_clear_chan = true;
+module_param(fence_clear_chan, bool, 0644);
+static int fence_dangling;
+module_param(fence_dangling, int, 0444);
+static int fence_nosig_done;
+module_param(fence_nosig_done, int, 0444);
+
 static inline struct nouveau_fence_chan *
 nouveau_fctx(struct nouveau_fence *fence)
 {
@@ -373,6 +385,13 @@ nouveau_fence_sync(struct nouveau_bo *nvbo, struct nouveau_channel *chan,
 
 				rcu_read_lock();
 				prev = rcu_dereference(f->channel);
+				if (prev && READ_ONCE(nouveau_fctx(f)->dead)) {
+					/* stale: that channel has been freed */
+					WRITE_ONCE(fence_dangling, fence_dangling + 1);
+					pr_warn_ratelimited("nouveau: fence %llu on dead context %s still points at its channel\n",
+							    f->base.seqno, nouveau_fctx(f)->name);
+					prev = NULL;
+				}
 				local = prev && prev->cli->drm == chan->cli->drm;
 				if (local && (prev == chan ||
 					      fctx->sync(f, prev, chan) == 0))
@@ -487,6 +506,14 @@ static bool nouveau_fence_no_signaling(struct dma_fence *f)
 	 */
 	if (nouveau_fence_is_signaled(f)) {
 		list_del(&fence->head);
+		/*
+		 * Off the pending list, so nouveau_fence_context_kill() will
+		 * never clear this pointer: drop it now like nouveau_fence_signal()
+		 * does, or it dangles once the channel is freed.
+		 */
+		WRITE_ONCE(fence_nosig_done, fence_nosig_done + 1);
+		if (fence_clear_chan)
+			rcu_assign_pointer(fence->channel, NULL);
 
 		dma_fence_put(&fence->base);
 		return false;
