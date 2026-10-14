@@ -2712,6 +2712,86 @@ static int tegra_dc_early_init(struct host1x_client *client)
 	return 0;
 }
 
+/*
+ * The head keeps fetching the first lines of the previous buffer for a short
+ * while after the flip has completed (measured on Tegra194: SMMU translation
+ * faults in the top ~200 rows of a buffer unmapped right after its flip
+ * event). Keep display mappings of retired buffers for a while instead of
+ * unmapping them in ->cleanup_fb().
+ */
+#define TEGRA_DC_UNPIN_DELAY_MS 100
+
+struct tegra_dc_retired {
+	struct list_head list;
+	struct host1x_bo_mapping *map;
+	unsigned long expires;
+};
+
+void tegra_dc_retire_mapping(struct tegra_dc *dc, struct host1x_bo_mapping *map)
+{
+	struct tegra_dc_retired *r;
+
+	if (!map)
+		return;
+
+	r = kmalloc(sizeof(*r), GFP_KERNEL);
+	if (!r) {
+		host1x_bo_unpin(map);
+		return;
+	}
+
+	r->map = map;
+	r->expires = jiffies + msecs_to_jiffies(TEGRA_DC_UNPIN_DELAY_MS);
+
+	spin_lock(&dc->retired_lock);
+	list_add_tail(&r->list, &dc->retired);
+	spin_unlock(&dc->retired_lock);
+
+	schedule_delayed_work(&dc->retire_work, msecs_to_jiffies(TEGRA_DC_UNPIN_DELAY_MS));
+}
+
+static void tegra_dc_retire_work(struct work_struct *work)
+{
+	struct tegra_dc *dc = container_of(to_delayed_work(work), struct tegra_dc, retire_work);
+	struct tegra_dc_retired *r, *tmp;
+	unsigned long next = 0;
+	LIST_HEAD(expired);
+
+	spin_lock(&dc->retired_lock);
+	list_for_each_entry_safe(r, tmp, &dc->retired, list) {
+		if (time_after_eq(jiffies, r->expires))
+			list_move_tail(&r->list, &expired);
+		else if (!next)
+			next = r->expires;	/* list is in insertion = expiry order */
+	}
+	spin_unlock(&dc->retired_lock);
+
+	list_for_each_entry_safe(r, tmp, &expired, list) {
+		host1x_bo_unpin(r->map);
+		kfree(r);
+	}
+
+	if (next)
+		schedule_delayed_work(&dc->retire_work, next - jiffies + 1);
+}
+
+static void tegra_dc_flush_retired(struct tegra_dc *dc)
+{
+	struct tegra_dc_retired *r, *tmp;
+	LIST_HEAD(all);
+
+	cancel_delayed_work_sync(&dc->retire_work);
+
+	spin_lock(&dc->retired_lock);
+	list_splice_init(&dc->retired, &all);
+	spin_unlock(&dc->retired_lock);
+
+	list_for_each_entry_safe(r, tmp, &all, list) {
+		host1x_bo_unpin(r->map);
+		kfree(r);
+	}
+}
+
 static int tegra_dc_init(struct host1x_client *client)
 {
 	struct drm_device *drm = dev_get_drvdata(client->host);
@@ -2839,6 +2919,8 @@ static int tegra_dc_exit(struct host1x_client *client)
 {
 	struct tegra_dc *dc = host1x_client_to_dc(client);
 	int err;
+
+	tegra_dc_flush_retired(dc);
 
 	if (!tegra_dc_has_window_groups(dc))
 		return 0;
@@ -3290,6 +3372,10 @@ static int tegra_dc_probe(struct platform_device *pdev)
 	dc = devm_kzalloc(&pdev->dev, sizeof(*dc), GFP_KERNEL);
 	if (!dc)
 		return -ENOMEM;
+
+	INIT_LIST_HEAD(&dc->retired);
+	spin_lock_init(&dc->retired_lock);
+	INIT_DELAYED_WORK(&dc->retire_work, tegra_dc_retire_work);
 
 	dc->soc = of_device_get_match_data(&pdev->dev);
 
