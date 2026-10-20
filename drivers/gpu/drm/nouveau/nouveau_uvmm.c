@@ -32,6 +32,11 @@
 #include <nvif/if000c.h>
 #include <nvif/if900d.h>
 
+static int nouveau_uvmm_sysmem_vol = 1;
+MODULE_PARM_DESC(uvmm_sysmem_vol,
+		 "Map VM_BIND system memory volatile (L2-uncached) (default 1)");
+module_param_named(uvmm_sysmem_vol, nouveau_uvmm_sysmem_vol, int, 0644);
+
 #define NOUVEAU_VA_SPACE_BITS		47 /* FIXME */
 #define NOUVEAU_VA_SPACE_START		0x0
 #define NOUVEAU_VA_SPACE_END		(1ULL << NOUVEAU_VA_SPACE_BITS)
@@ -152,7 +157,7 @@ nouveau_uvmm_vmm_map(struct nouveau_uvmm *uvmm,
 		if (mem->mem.type & NVIF_MEM_VRAM)
 			args.gf100.vol = 0;
 		else
-			args.gf100.vol = 1;
+			args.gf100.vol = !!READ_ONCE(nouveau_uvmm_sysmem_vol);
 		args.gf100.ro = 0;
 		args.gf100.priv = 0;
 		args.gf100.kind = kind;
