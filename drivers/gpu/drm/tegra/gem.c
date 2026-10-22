@@ -490,6 +490,14 @@ static struct tegra_bo *tegra_bo_import(struct drm_device *drm,
 	get_dma_buf(buf);
 	bo->dma_buf = buf;
 
+	/*
+	 * Share the exporter's reservation object, as drm_gem_prime_import_dev()
+	 * does, so that the fences of whoever renders into the buffer (e.g. the
+	 * GPU) are seen by drm_gem_plane_helper_prepare_fb() and the atomic
+	 * commit waits for them before scanning the buffer out.
+	 */
+	bo->gem.resv = buf->resv;
+
 	return bo;
 
 detach:
